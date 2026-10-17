@@ -7,6 +7,7 @@ import connectk.core.model.Placement;
 import connectk.core.model.Player;
 import connectk.core.model.Position;
 import connectk.core.model.Rules;
+import connectk.core.theory.OpeningBook;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -16,11 +17,12 @@ import java.util.OptionalInt;
 /**
  * High-performance exact (proof) solver for gravity positions whose
  * bitboard fits in a single {@code long} — the fast path behind
- * {@link ConnectKSolver}. It implements exactly the same algorithm,
- * score convention and result semantics as {@link ExactSolver}
- * (negamax to the end of the game, alpha-beta, transposition table with
- * mirror-canonical keys, threat-based ordering, tactical shortcuts),
- * but with a primitive, allocation-free search loop:
+ * {@link ConnectKSolver}. Same score convention and result semantics
+ * as {@link ExactSolver}, but the search is a PVS negamax core
+ * (dual-bound transposition table with
+ * mirror-canonical keys, TT-move + threat-based ordering, tactical
+ * shortcuts, direct score-bound tightening, optional generated
+ * opening book), with a primitive, allocation-free search loop:
  *
  * <ul>
  *   <li>state is two {@code long}s plus an {@code int[]} of column
@@ -44,9 +46,13 @@ import java.util.OptionalInt;
  */
 public final class FastExactSolver {
 
-    private static final int BOUND_EXACT = 0;
-    private static final int BOUND_LOWER = 1;
-    private static final int BOUND_UPPER = 2;
+    // Dual-bound TT entries: every entry carries both a lower and an
+    // upper bound on the exact score (equal = exact), so null-window
+    // probes and full-window re-searches accumulate information instead
+    // of overwriting each other's bounds. Scores fit in a signed byte
+    // (one-word boards have |score| <= 66); sentinels mean "no bound".
+    private static final int NO_LOWER = -128;
+    private static final int NO_UPPER = 127;
 
     private static final int DEFAULT_TT_CAPACITY = 1 << 21; // ~2M entries, ~42 MB
     private static final int MAX_PROBES = 64;
@@ -58,7 +64,7 @@ public final class FastExactSolver {
     private final int maxTtCapacity;
     private long[] ttCur;
     private long[] ttMask;
-    private int[] ttData;   // packed: score(8) | bound(2) | bestCol+1(7)
+    private int[] ttData;   // packed: lower(8) | upper(8) | bestCol+1(7)
     private byte[] ttUsed;
     private int ttIndexMask;
 
@@ -90,6 +96,10 @@ public final class FastExactSolver {
     private boolean prepMinPossibleValid;
 
     private int rootBestCol;
+    private boolean rootMoveProven;
+    private int prepTtCol = -1;
+
+    private OpeningBook book;
 
     private long nodes;
     private long nodeLimit;
@@ -108,6 +118,15 @@ public final class FastExactSolver {
             throw new IllegalArgumentException("maxTtCapacity must be a positive power of two");
         }
         this.maxTtCapacity = maxTtCapacity;
+    }
+
+    /**
+     * Attach a generated opening book. Positions in the book are answered
+     * exactly without search (the book was itself produced by exact
+     * search); everything else is searched as usual.
+     */
+    public void setOpeningBook(OpeningBook book) {
+        this.book = book;
     }
 
     /** Whether this fast path can handle the given rules. */
@@ -145,6 +164,7 @@ public final class FastExactSolver {
         this.moveCols = new int[cells + 1][Math.max(1, width)];
         this.moveScores = new int[cells + 1][Math.max(1, width)];
         this.rootBestCol = -1;
+        this.rootMoveProven = true;
 
         this.nodes = 0;
         this.nodeLimit = nodeLimit;
@@ -178,11 +198,13 @@ public final class FastExactSolver {
                 plies = terminalPly - position.movesPlayed();
             }
             return new SearchResult(SearchResult.Certainty.PROVEN_EXACT,
-                    Optional.of(Outcome.fromScoreSign(score)), bestMove, true,
+                    Optional.of(Outcome.fromScoreSign(score)), bestMove, rootMoveProven,
                     score, OptionalInt.of(plies), plies, nodes, elapsed, pv,
-                    "Proved by exhaustive alpha-beta search (fast one-word gravity solver: "
-                            + "primitive bitboard state, open-addressing transposition table, "
-                            + "threat ordering).");
+                    "Proved by exhaustive principal-variation alpha-beta search (fast one-word gravity "
+                            + "solver: primitive bitboard state, open-addressing transposition "
+                            + "table, threat ordering" + (book != null ? ", generated opening book" : "") + ")."
+                            + (rootMoveProven ? "" : " The score is proven; identifying an optimal "
+                            + "move ran out of budget, so the suggested move is not certified."));
         } catch (SearchAbortedException e) {
             return SearchResult.unknown(nodes, elapsedMillis(),
                     "Exact proof aborted (" + e.reason() + ") after " + nodes + " nodes; no conclusion claimed.");
@@ -202,12 +224,30 @@ public final class FastExactSolver {
         checkBudget();
         CanonicalKey key = canonicalKey();
         int slot = slotFor(key.cur, key.mask);
+        prepTtCol = -1;
         prepare();
         if (prepForced) {
             rootBestCol = prepForcedCol;
-            store(slot, key, prepForcedScore, BOUND_EXACT, prepForcedCol);
+            storeExact(slot, key, prepForcedScore, prepForcedCol);
             return prepForcedScore;
         }
+        if (book != null && book.coversPly(moves)) {
+            int bookScore = book.lookup(key.cur, key.mask);
+            if (bookScore != OpeningBook.MISS) {
+                int bc = book.bestCol(key.cur, key.mask);
+                rootBestCol = bc >= 0
+                        ? (key.flipped ? width - 1 - bc : bc)
+                        : findAchievingMove(bookScore, key);
+                storeExact(slot, key, bookScore, rootBestCol);
+                return bookScore;
+            }
+        }
+        // Principal-variation search at the root: first move full window,
+        // later moves null-window probed then re-searched if they beat
+        // alpha. (An MTD(f) driver was tried and measured 17-31% MORE
+        // nodes on opening sets: with PVS already probing null windows
+        // per move, MTD's repeated root passes are pure overhead for
+        // strong solving. See docs/PERFORMANCE.md.)
         int level = moves;
         int n = prepCount;
         int alpha = -infinity;
@@ -221,9 +261,7 @@ public final class FastExactSolver {
                 score = -negamax(-infinity, -alpha);
             } else {
                 score = -negamax(-alpha - 1, -alpha);
-                if (score > alpha) {
-                    score = -negamax(-infinity, -alpha);
-                }
+                if (score > alpha) score = -negamax(-infinity, -alpha);
             }
             undo(col);
             if (score > best) {
@@ -232,8 +270,74 @@ public final class FastExactSolver {
             }
             if (best > alpha) alpha = best;
         }
-        store(slot, key, best, BOUND_EXACT, rootBestCol);
+        storeExact(slot, key, best, rootBestCol);
         return best;
+    }
+
+    /**
+     * Find a root move that achieves the proven score. Tries the
+     * transposition-table move first, then the ordered candidates, each
+     * with a null-window test on the child ("is the child value at most
+     * -score?"). If the budget dies during verification, falls back to
+     * the best unverified candidate and marks the move unproven (the
+     * score itself stays proven).
+     */
+    private int findAchievingMove(int score, CanonicalKey key) {
+        prepTtCol = -1;
+        prepare();
+        if (prepForced) return prepForcedCol;
+        int level = moves;
+        int n = prepCount;
+        // Candidate order: TT move (if any) first, then prepare()'s order.
+        int ttCol = -1;
+        int slot = slotFor(key.cur, key.mask);
+        if (ttUsed[slot] != 0 && ttCur[slot] == key.cur && ttMask[slot] == key.mask) {
+            int best = ttBestCol(ttData[slot]);
+            if (best >= 0) ttCol = key.flipped ? width - 1 - best : best;
+        }
+        try {
+            if (ttCol >= 0 && heights[ttCol] < height && achieves(ttCol, score)) return ttCol;
+            for (int i = 0; i < n; i++) {
+                int col = moveCols[level][i];
+                if (col == ttCol) continue;
+                if (achieves(col, score)) return col;
+            }
+            // Should not happen (some move must achieve the maximum);
+            // fall back to a full-window scan as a safety net.
+            int bestCol = moveCols[level][0];
+            int bestVal = -infinity;
+            for (int i = 0; i < n; i++) {
+                int col = moveCols[level][i];
+                play(col);
+                int v;
+                try {
+                    v = -negamax(-infinity, infinity);
+                } finally {
+                    undo(col);
+                }
+                if (v > bestVal) {
+                    bestVal = v;
+                    bestCol = col;
+                }
+            }
+            rootMoveProven = bestVal == score;
+            return bestCol;
+        } catch (SearchAbortedException aborted) {
+            rootMoveProven = false;
+            return ttCol >= 0 && heights[ttCol] < height ? ttCol : moveCols[level][0];
+        }
+    }
+
+    /** Null-window test: does playing {@code col} achieve at least the proven root score? */
+    private boolean achieves(int col, int score) {
+        play(col);
+        int v;
+        try {
+            v = negamax(-score, -score + 1);
+        } finally {
+            undo(col);
+        }
+        return v <= -score;
     }
 
     private int negamax(int alpha, int beta) {
@@ -246,27 +350,30 @@ public final class FastExactSolver {
         int alphaOrig = alpha;
         int betaOrig = beta;
         CanonicalKey key = canonicalKey();
+        if (book != null && book.coversPly(moves)) {
+            int bookScore = book.lookup(key.cur, key.mask);
+            if (bookScore != OpeningBook.MISS) return bookScore;
+        }
+        prepTtCol = -1;
         int slot = slotFor(key.cur, key.mask);
         if (ttUsed[slot] != 0 && ttCur[slot] == key.cur && ttMask[slot] == key.mask) {
             int data = ttData[slot];
-            int score = (data << 24) >> 24;
-            switch ((data >>> 8) & 3) {
-                case BOUND_EXACT -> {
-                    return score;
-                }
-                case BOUND_LOWER -> alpha = Math.max(alpha, score);
-                case BOUND_UPPER -> beta = Math.min(beta, score);
-                default -> {
-                }
-            }
-            if (alpha >= beta) return score;
+            int lower = ttLower(data);
+            int upper = ttUpper(data);
+            int ttBest = ttBestCol(data);
+            if (ttBest >= 0) prepTtCol = key.flipped ? width - 1 - ttBest : ttBest;
+            if (lower >= beta) return lower;
+            if (upper <= alpha) return upper;
+            alpha = Math.max(alpha, lower);
+            beta = Math.min(beta, upper);
+            if (alpha >= beta) return alpha; // bounds met: exact
             alphaOrig = alpha;
             betaOrig = beta;
         }
 
         prepare();
         if (prepForced) {
-            store(slot, key, prepForcedScore, BOUND_EXACT, prepForcedCol);
+            storeExact(slot, key, prepForcedScore, prepForcedCol);
             return prepForcedScore;
         }
         // Score-bound tightening: prepare() has established that the side
@@ -278,7 +385,7 @@ public final class FastExactSolver {
         if (maxPossible < beta) {
             beta = maxPossible;
             if (alpha >= beta) {
-                store(slot, key, maxPossible, BOUND_UPPER, -1);
+                storeBounds(slot, key, NO_LOWER, maxPossible, -1);
                 return maxPossible;
             }
             betaOrig = beta;
@@ -290,7 +397,7 @@ public final class FastExactSolver {
             if (minPossible > alpha) {
                 alpha = minPossible;
                 if (alpha >= beta) {
-                    store(slot, key, minPossible, BOUND_LOWER, -1);
+                    storeBounds(slot, key, minPossible, NO_UPPER, -1);
                     return minPossible;
                 }
                 alphaOrig = alpha;
@@ -324,8 +431,9 @@ public final class FastExactSolver {
         }
         if (best > maxPossible) best = maxPossible;
         if (minValid && best < minPossible) best = minPossible;
-        int bound = best <= alphaOrig ? BOUND_UPPER : (best >= betaOrig ? BOUND_LOWER : BOUND_EXACT);
-        store(slot, key, best, bound, bestCol);
+        if (best <= alphaOrig) storeBounds(slot, key, NO_LOWER, best, bestCol);
+        else if (best >= betaOrig) storeBounds(slot, key, best, NO_UPPER, bestCol);
+        else storeExact(slot, key, best, bestCol);
         return best;
     }
 
@@ -384,6 +492,7 @@ public final class FastExactSolver {
             int idx = c * stride + heights[c];
             if (idx + 1 < 64 && ((oppSpots >>> (idx + 1)) & 1L) != 0) continue; // losing move
             int s = (Math.min(c, width - 1 - c) + 1) * 10;
+            if (c == prepTtCol) s += 10_000_000; // transposition-table move first
             if (((oppSpots >>> idx) & 1L) != 0) s += 5_000; // occupies an opponent threat cell
             play(c);
             boolean terminalAfter = moves == cells || hasLine(mask ^ cur);
@@ -426,7 +535,7 @@ public final class FastExactSolver {
             int slot = slotFor(key.cur, key.mask);
             int col = -1;
             if (ttUsed[slot] != 0 && ttCur[slot] == key.cur && ttMask[slot] == key.mask) {
-                int best = ((ttData[slot] >>> 10) & 0x7F) - 1;
+                int best = ttBestCol(ttData[slot]);
                 if (best >= 0) col = key.flipped ? width - 1 - best : best;
             }
             if (col < 0) {
@@ -570,11 +679,34 @@ public final class FastExactSolver {
         return home; // probe budget exhausted: overwrite home slot
     }
 
-    private void store(int slot, CanonicalKey key, int score, int bound, int bestCol) {
+    private static int ttLower(int data) {
+        return (data << 24) >> 24;
+    }
+
+    private static int ttUpper(int data) {
+        return (data << 16) >> 24;
+    }
+
+    private static int ttBestCol(int data) {
+        return ((data >>> 16) & 0x7F) - 1;
+    }
+
+    private void storeExact(int slot, CanonicalKey key, int score, int bestCol) {
+        storeBounds(slot, key, score, score, bestCol);
+    }
+
+    /** Merge new bounds into the slot (keeping any tighter existing bounds for the same key). */
+    private void storeBounds(int slot, CanonicalKey key, int lower, int upper, int bestCol) {
         int canonicalCol = bestCol < 0 ? -1 : (key.flipped ? width - 1 - bestCol : bestCol);
+        if (ttUsed[slot] != 0 && ttCur[slot] == key.cur && ttMask[slot] == key.mask) {
+            int data = ttData[slot];
+            lower = Math.max(lower, ttLower(data));
+            upper = Math.min(upper, ttUpper(data));
+            if (canonicalCol < 0) canonicalCol = ttBestCol(data);
+        }
         ttCur[slot] = key.cur;
         ttMask[slot] = key.mask;
-        ttData[slot] = (score & 0xFF) | (bound << 8) | ((canonicalCol + 1) << 10);
+        ttData[slot] = (lower & 0xFF) | ((upper & 0xFF) << 8) | ((canonicalCol + 1) << 16);
         ttUsed[slot] = 1;
     }
 
