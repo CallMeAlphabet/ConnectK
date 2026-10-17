@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ConnectK</title>
+<style>
+  :root {
+    --bg: #1b2028; --panel: #232a35; --panel2: #2a3240; --text: #dbe4f0;
+    --muted: #93a3b8; --accent: #3e7ccc; --border: #38445a;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 13px/1.45 system-ui, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  header {
+    display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center;
+    padding: 8px 10px; background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  header .title { font-weight: 700; margin-right: 4px; }
+  label { color: var(--muted); }
+  select, input[type="number"] {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 3px 5px;
+  }
+  input[type="number"] { width: 52px; }
+  button {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 4px 10px; cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: #21549e; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #boardWrap { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #status { padding: 6px 12px; color: var(--text); min-height: 28px; }
+  #board { flex: 1; width: 100%; display: block; touch-action: manipulation; }
+  aside {
+    width: 360px; flex: none; overflow-y: auto; padding: 8px;
+    background: var(--panel); border-left: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  section { border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+  section h3 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .grid { display: grid; grid-template-columns: auto 1fr; gap: 5px 8px; align-items: center; }
+  .btnrow { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  #badge {
+    border-radius: 5px; padding: 5px 8px; font-weight: 600; color: #fff;
+    background: #455a75; text-align: center;
+  }
+  #result, #moves {
+    white-space: pre-wrap; word-break: break-word; margin: 0;
+    font: 12px/1.5 ui-monospace, monospace; color: var(--text);
+  }
+  #theoryText small { color: var(--muted); }
+  .hint-keys { color: var(--muted); font-size: 11px; padding: 0 12px 8px; }
+  #err { color: #ff8a80; min-height: 16px; padding: 0 12px; }
+</style>
+</head>
+<body>
+<header>
+  <span class="title">ConnectK</span>
+  <label>Preset:</label>
+  <select id="preset">
+    <option>Standard 7x6, K=4</option>
+    <option>Small (exact-friendly) 5x4, K=4</option>
+    <option>Gravity 9x6, K=5</option>
+    <option>Gravity 10x7, K=6</option>
+    <option>No diagonals 7x6, K=4</option>
+    <option>Misere 7x6, K=4</option>
+    <option>Free 5x5, K=4</option>
+    <option>Free 9x9, K=5 (Gomoku-lite)</option>
+    <option>Custom</option>
+  </select>
+  <label>W:</label><input id="w" type="number" min="1" max="25" value="7">
+  <label>H:</label><input id="h" type="number" min="1" max="25" value="6">
+  <label>K:</label><input id="k" type="number" min="2" max="12" value="4">
+  <select id="placement">
+    <option value="gravity">Gravity (drop)</option>
+    <option value="free">Free placement</option>
+  </select>
+  <label><input id="diagonals" type="checkbox" checked> Diagonals</label>
+  <label><input id="misere" type="checkbox"> Misere (line loses)</label>
+  <button id="newGame" class="primary">New game</button>
+  <button id="undo">Undo</button>
+</header>
+
+<main>
+  <div id="boardWrap">
+    <div id="status">Loading…</div>
+    <div id="err"></div>
+    <canvas id="board"></canvas>
+    <div class="hint-keys">Keys: 1–9 play column · U undo · N new game · H hint · Space AI move</div>
+  </div>
+
+  <aside>
+    <section>
+      <h3>Published mathematical status</h3>
+      <div id="theoryText">—</div>
+    </section>
+
+    <section>
+      <h3>Players</h3>
+      <select id="players" style="width:100%">
+        <option>Human vs Human</option>
+        <option selected>Human vs AI</option>
+        <option>AI vs Human</option>
+        <option>AI vs AI</option>
+      </select>
+    </section>
+
+    <section>
+      <h3>Solver</h3>
+      <div class="grid">
+        <label>Mode:</label>
+        <select id="mode">
+          <option value="auto">Auto (theory &gt; exact &gt; depth)</option>
+          <option value="exact">Exact proof only</option>
+          <option value="depth">Depth-limited only</option>
+        </select>
+        <label>Depth (plies):</label>
+        <input id="depth" type="number" min="1" max="40" value="16">
+        <label>Time limit (s):</label>
+        <input id="time" type="number" min="0.1" max="600" step="0.5" value="3">
+        <span></span>
+        <label><input id="useTheory" type="checkbox" checked> Use published theory</label>
+      </div>
+      <div class="btnrow">
+        <button id="hint">Analyse / Hint</button>
+        <button id="aiMove">AI move now</button>
+        <button id="cancel" disabled>Cancel</button>
+      </div>
+    </section>
+
+    <section>
+      <h3>Analysis</h3>
+      <div id="badge">No analysis yet</div>
+      <pre id="result"></pre>
+    </section>
+
+    <section>
+      <h3>Moves</h3>
+      <pre id="moves"></pre>
+    </section>
+  </aside>
+</main>
+
+<script>
+"use strict";
+const T = window.__TAURI__;
+const invoke = T && T.core ? T.core.invoke : null;
+const $ = id => document.getElementById(id);
+const canvas = $("board"), ctx = canvas.getContext("2d");
+
+let state = null;          // GameStateDto
+let geom = null;           // board geometry for hit-testing/drawing
+let hover = { c: -1, r: -1 };
+let searching = false;
+let aiTimer = null;
+
+const COLORS = {
+  bg: "#1b2028", board: "#21549e", boardTop: "#3e7ccc", boardEdge: "#163a70",
+  hole: "#102a4e", holeShadow: "#08162c",
+  p1: "#e03e3a", p1Light: "#f8968c", p1Dark: "#96201c",
+  p2: "#f2c636", p2Light: "#ffe896", p2Dark: "#aa8014",
+  labels: "#aab6c8", suggest: "#57d977", last: "#ffffff"
+};
+
+function showError(e) { $("err").textContent = e ? String(e) : ""; }
+
+function rulesFromControls() {
+  return {
+    width: parseInt($("w").value, 10),
+    height: parseInt($("h").value, 10),
+    connect: parseInt($("k").value, 10),
+    placement: $("placement").value,
+    diagonals: $("diagonals").checked,
+    misere: $("misere").checked
+  };
+}
+function requestFromControls() {
+  return {
+    mode: $("mode").value,
+    depth: parseInt($("depth").value, 10) || 16,
+    time_seconds: parseFloat($("time").value) || 3,
+    use_theory: $("useTheory").checked
+  };
+}
+
+async function call(cmd, args) {
+  if (!invoke) { showError("Tauri runtime not detected — run with: cargo tauri dev (from rust/gui/src-tauri)"); throw new Error("no tauri"); }
+  return invoke(cmd, args);
+}
+
+async function refresh() {
+  state = await call("get_state");
+  render();
+}
+
+function render() {
+  if (!state) return;
+  $("status").textContent = state.status_text + "   ·   " + state.rules_text;
+  // theory panel
+  const bookNote = state.book_name ? `<br><small>Opening book: ${escapeHtml(state.book_name)}</small>` : "";
+  if (state.theory) {
+    const t = state.theory;
+    $("theoryText").innerHTML =
+      `Proven: <b>${t.outcome}</b> for the side to move` +
+      (t.plies_to_end != null ? `, ends in ${t.plies_to_end} plies` : "") +
+      `<br><small>${escapeHtml(t.source)}</small>` + bookNote;
+  } else {
+    $("theoryText").innerHTML = "No published mathematical result for this position/ruleset." + bookNote;
+  }
+  // moves list
+  let txt = "";
+  state.moves.forEach((m, i) => {
+    if (i % 2 === 0) txt += (i / 2 + 1) + ". ";
+    txt += m.notation + " ";
+  });
+  $("moves").textContent = txt;
+  drawBoard();
+  maybeScheduleAi();
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function cellAt(c, r) { return state.cells[c * state.height + r]; }
+function landingRow(c) {
+  let r = 0;
+  while (r < state.height && cellAt(c, r) !== 0) r++;
+  return r < state.height ? r : -1;
+}
+
+// ---------- board drawing ----------
+function resizeCanvas() {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = Math.max(50, Math.round(rect.width * dpr));
+  canvas.height = Math.max(50, Math.round(rect.height * dpr));
+  drawBoard();
+}
+
+function drawBoard() {
+  if (!state) return;
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = COLORS.bg; ctx.fillRect(0, 0, W, H);
+  const pad = Math.min(W, H) * 0.03 + 4;
+  const labelH = 20 * (window.devicePixelRatio || 1);
+  const cell = Math.min((W - 2 * pad) / state.width, (H - 2 * pad - labelH) / state.height);
+  if (cell <= 4) return;
+  const bw = cell * state.width, bh = cell * state.height;
+  const x0 = (W - bw) / 2, y0 = pad + (H - 2 * pad - labelH - bh) / 2;
+  geom = { x0, y0, cell, bw, bh };
+
+  // board body
+  const grad = ctx.createLinearGradient(0, y0, 0, y0 + bh);
+  grad.addColorStop(0, COLORS.boardTop); grad.addColorStop(1, COLORS.board);
+  roundRect(x0 - cell * 0.18, y0 - cell * 0.18, bw + cell * 0.36, bh + cell * 0.36, cell * 0.22);
+  ctx.fillStyle = grad; ctx.fill();
+  ctx.strokeStyle = COLORS.boardEdge; ctx.lineWidth = Math.max(1, cell * 0.04); ctx.stroke();
+
+  const lineSet = new Set(state.line_cells.map(m => m.column + "," + m.row));
+  for (let c = 0; c < state.width; c++) {
+    for (let r = 0; r < state.height; r++) {
+      const cx = x0 + (c + 0.5) * cell;
+      const cy = y0 + (state.height - 1 - r + 0.5) * cell;
+      const owner = cellAt(c, r);
+      if (owner === 0) drawHole(cx, cy, cell);
+      else drawDisc(cx, cy, cell, owner);
+      if (lineSet.has(c + "," + r)) {
+        ctx.beginPath(); ctx.arc(cx, cy, cell * 0.46, 0, Math.PI * 2);
+        ctx.strokeStyle = "#ffffff"; ctx.lineWidth = Math.max(2, cell * 0.07); ctx.stroke();
+      }
+    }
+  }
+  // last move marker
+  if (state.last_move) {
+    const m = state.last_move;
+    const cx = x0 + (m.column + 0.5) * cell, cy = y0 + (state.height - 1 - m.row + 0.5) * cell;
+    ctx.beginPath(); ctx.arc(cx, cy, cell * 0.14, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(255,255,255,0.85)"; ctx.fill();
+  }
+  // suggested move ring
+  if (state.suggested) {
+    const m = state.suggested;
+    const cx = x0 + (m.column + 0.5) * cell, cy = y0 + (state.height - 1 - m.row + 0.5) * cell;
+    ctx.beginPath(); ctx.arc(cx, cy, cell * 0.47, 0, Math.PI * 2);
+    ctx.strokeStyle = COLORS.suggest; ctx.lineWidth = Math.max(2, cell * 0.06); ctx.stroke();
+  }
+  // hover ghost
+  if (!searching && !state.terminal && hover.c >= 0) {
+    const r = state.gravity ? landingRow(hover.c) : hover.r;
+    if (r >= 0 && cellAt(hover.c, r) === 0) {
+      const cx = x0 + (hover.c + 0.5) * cell, cy = y0 + (state.height - 1 - r + 0.5) * cell;
+      ctx.globalAlpha = 0.45;
+      drawDisc(cx, cy, cell, state.side_to_move);
+      ctx.globalAlpha = 1;
+    }
+  }
+  // column labels
+  ctx.fillStyle = COLORS.labels;
+  ctx.font = `${Math.max(10, cell * 0.32)}px system-ui`;
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  for (let c = 0; c < state.width; c++) {
+    ctx.fillText(String((c + 1) % 10), x0 + (c + 0.5) * cell, y0 + bh + cell * 0.25);
+  }
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+function drawHole(cx, cy, cell) {
+  ctx.beginPath(); ctx.arc(cx, cy, cell * 0.42, 0, Math.PI * 2);
+  ctx.fillStyle = COLORS.hole; ctx.fill();
+  ctx.beginPath(); ctx.arc(cx, cy + cell * 0.05, cell * 0.36, 0, Math.PI * 2);
+  ctx.fillStyle = COLORS.holeShadow; ctx.fill();
+}
+function drawDisc(cx, cy, cell, owner) {
+  const main = owner === 1 ? COLORS.p1 : COLORS.p2;
+  const light = owner === 1 ? COLORS.p1Light : COLORS.p2Light;
+  const dark = owner === 1 ? COLORS.p1Dark : COLORS.p2Dark;
+  ctx.beginPath(); ctx.arc(cx, cy + cell * 0.03, cell * 0.42, 0, Math.PI * 2);
+  ctx.fillStyle = dark; ctx.fill();
+  ctx.beginPath(); ctx.arc(cx, cy, cell * 0.40, 0, Math.PI * 2);
+  ctx.fillStyle = main; ctx.fill();
+  ctx.beginPath(); ctx.arc(cx - cell * 0.12, cy - cell * 0.14, cell * 0.16, 0, Math.PI * 2);
+  ctx.fillStyle = light; ctx.fill();
+}
+
+function eventCell(e) {
+  if (!geom || !state) return { c: -1, r: -1 };
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const x = (e.clientX - rect.left) * dpr, y = (e.clientY - rect.top) * dpr;
+  const c = Math.floor((x - geom.x0) / geom.cell);
+  const rFromTop = Math.floor((y - geom.y0) / geom.cell);
+  const r = state.height - 1 - rFromTop;
+  if (c < 0 || c >= state.width || r < 0 || r >= state.height) return { c: -1, r: -1 };
+  return { c, r };
+}
+
+canvas.addEventListener("mousemove", e => {
+  const { c, r } = eventCell(e);
+  if (c !== hover.c || r !== hover.r) { hover = { c, r }; drawBoard(); }
+});
+canvas.addEventListener("mouseleave", () => { hover = { c: -1, r: -1 }; drawBoard(); });
+canvas.addEventListener("click", async e => {
+  if (searching || !state || state.terminal) return;
+  const { c, r } = eventCell(e);
+  if (c < 0) return;
+  await doPlay(c, state.gravity ? undefined : r);
+});
+
+async function doPlay(column, row) {
+  showError("");
+  try {
+    state = await call("play", { column, row: row === undefined ? null : row });
+    clearAnalysis();
+    render();
+  } catch (err) { showError(err); }
+}
+
+function clearAnalysis() {
+  $("badge").textContent = "No analysis yet";
+  $("badge").style.background = "#455a75";
+  $("result").textContent = "";
+}
+
+// ---------- controls ----------
+const PRESETS = [
+  { w: 7, h: 6, k: 4, placement: "gravity", diagonals: true, misere: false },
+  { w: 5, h: 4, k: 4, placement: "gravity", diagonals: true, misere: false },
+  { w: 9, h: 6, k: 5, placement: "gravity", diagonals: true, misere: false },
+  { w: 10, h: 7, k: 6, placement: "gravity", diagonals: true, misere: false },
+  { w: 7, h: 6, k: 4, placement: "gravity", diagonals: false, misere: false },
+  { w: 7, h: 6, k: 4, placement: "gravity", diagonals: true, misere: true },
+  { w: 5, h: 5, k: 4, placement: "free", diagonals: true, misere: false },
+  { w: 9, h: 9, k: 5, placement: "free", diagonals: true, misere: false }
+];
+$("preset").addEventListener("change", () => {
+  const p = PRESETS[$("preset").selectedIndex];
+  if (!p) return;
+  $("w").value = p.w; $("h").value = p.h; $("k").value = p.k;
+  $("placement").value = p.placement;
+  $("diagonals").checked = p.diagonals; $("misere").checked = p.misere;
+  newGame();
+});
+["w", "h", "k", "placement", "diagonals", "misere"].forEach(id =>
+  $(id).addEventListener("change", () => { $("preset").value = "Custom"; }));
+
+async function newGame() {
+  showError("");
+  stopAiTimer();
+  try {
+    state = await call("new_game", { rules: rulesFromControls() });
+    clearAnalysis();
+    render();
+  } catch (err) { showError(err); }
+}
+$("newGame").addEventListener("click", newGame);
+$("undo").addEventListener("click", async () => {
+  showError("");
+  stopAiTimer();
+  try { state = await call("undo"); clearAnalysis(); render(); }
+  catch (err) { showError(err); }
+});
+$("players").addEventListener("change", render);
+
+function setSearching(on) {
+  searching = on;
+  $("hint").disabled = on; $("aiMove").disabled = on; $("cancel").disabled = !on;
+}
+
+async function runAnalysis(ai) {
+  if (searching || !state) return;
+  if (state.terminal && ai) return;
+  showError("");
+  setSearching(true);
+  $("status").textContent = "Searching… (" + $("mode").value + ")";
+  try {
+    const res = await call(ai ? "ai_move" : "analyse", { req: requestFromControls() });
+    displayResult(res);
+    state = await call("get_state");
+    render();
+    if (ai && !res.best_move) {
+      $("status").textContent = `AI has no move to play (${res.certainty}). In Exact mode, raise the budget or switch to Auto.`;
+    }
+  } catch (err) {
+    if (String(err).includes("cancelled")) { $("status").textContent = "Search cancelled"; }
+    else showError(err);
+  } finally { setSearching(false); }
+}
+$("hint").addEventListener("click", () => runAnalysis(false));
+$("aiMove").addEventListener("click", () => runAnalysis(true));
+$("cancel").addEventListener("click", async () => { try { await call("cancel"); } catch (_) {} });
+
+function displayResult(res) {
+  const badge = $("badge");
+  if (res.certainty === "PROVEN_EXACT") {
+    badge.textContent = "PROVEN — exact search"; badge.style.background = "#2e7d32";
+  } else if (res.certainty === "PROVEN_BY_THEORY") {
+    badge.textContent = "PROVEN — published theory" + (res.move_proven ? " (move proven optimal)" : " (move from heuristic search)");
+    badge.style.background = "#006978";
+  } else if (res.certainty === "HEURISTIC_DEPTH_LIMITED") {
+    badge.textContent = `Heuristic (depth ${res.depth_reached}) — NOT a proof`; badge.style.background = "#e67e22";
+  } else {
+    badge.textContent = "Unknown — budget exhausted"; badge.style.background = "#b71c1c";
+  }
+  $("result").textContent = res.result_text;
+}
+
+// ---------- AI auto-play ----------
+function stopAiTimer() { if (aiTimer) { clearTimeout(aiTimer); aiTimer = null; } }
+function aiToMove() {
+  if (!state || state.terminal) return false;
+  const idx = $("players").selectedIndex;
+  return idx === 3 || (idx === 1 && state.side_to_move === 2) || (idx === 2 && state.side_to_move === 1);
+}
+function maybeScheduleAi() {
+  if (searching || !aiToMove()) return;
+  stopAiTimer();
+  aiTimer = setTimeout(() => { if (aiToMove()) runAnalysis(true); }, 350);
+}
+
+// ---------- keyboard ----------
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  if (e.key >= "1" && e.key <= "9") {
+    const c = parseInt(e.key, 10) - 1;
+    if (state && c < state.width) doPlay(c, state.gravity ? undefined : landingRowFree(c));
+  } else if (e.key === "u" || e.key === "U") $("undo").click();
+  else if (e.key === "n" || e.key === "N") newGame();
+  else if (e.key === "h" || e.key === "H") runAnalysis(false);
+  else if (e.key === " ") { e.preventDefault(); runAnalysis(true); }
+});
+function landingRowFree(c) { // free placement: lowest empty cell of the column
+  for (let r = 0; r < state.height; r++) if (cellAt(c, r) === 0) return r;
+  return undefined;
+}
+
+// ---------- boot ----------
+if (T && T.event) {
+  T.event.listen("search-progress", ev => {
+    if (!searching) return;
+    const p = ev.payload;
+    $("status").textContent = "Searching… nodes=" + p.nodes
+      + (p.depth >= 0 ? " depth=" + p.depth : "")
+      + (p.best ? " best=" + p.best.notation : "");
+  }).catch(() => {});
+}
+new ResizeObserver(resizeCanvas).observe(canvas);
+window.addEventListener("resize", resizeCanvas);
+refresh().then(resizeCanvas).catch(showError);
+</script>
+</body>
+</html>

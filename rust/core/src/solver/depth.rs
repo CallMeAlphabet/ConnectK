@@ -257,9 +257,25 @@ impl DepthLimitedSolver {
         let moves = self.ordered_candidates(tt_move, false);
         let mut best = -INF;
         let mut best_move: Option<Move> = None;
-        for mv in moves {
+        for (i, mv) in moves.into_iter().enumerate() {
             self.pos.apply_resolved(mv);
-            let r = self.negamax(depth - 1, -beta, -alpha, ply + 1);
+            // Principal variation search: moves after the first are
+            // null-window probed and only re-searched with the full
+            // window if the probe beats alpha. The root score and best
+            // move at any fixed depth are identical to plain alpha-beta
+            // (see docs/PERFORMANCE.md); only node counts change.
+            let r = (|| -> Result<i32, Abort> {
+                if i == 0 {
+                    self.negamax(depth - 1, -beta, -alpha, ply + 1)
+                } else {
+                    let probe = -self.negamax(depth - 1, -alpha - 1, -alpha, ply + 1)?;
+                    if probe > alpha && probe < beta {
+                        self.negamax(depth - 1, -beta, -alpha, ply + 1)
+                    } else {
+                        Ok(-probe)
+                    }
+                }
+            })();
             self.pos.unapply_resolved(mv);
             let score = -r?;
             if score > best {

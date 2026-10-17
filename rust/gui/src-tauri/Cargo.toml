@@ -1,0 +1,35 @@
+[package]
+name = "connectk-gui"
+version = "0.1.0"
+edition = "2021"
+description = "ConnectK desktop GUI (Tauri). Deleting rust/gui removes the GUI completely; core and CLI are unaffected."
+
+# Own workspace: this crate is excluded from the engine workspace so that
+# `cargo build` in rust/ never needs the Tauri/WebKitGTK system stack.
+[workspace]
+
+[lib]
+name = "connectk_gui_lib"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "connectk-gui"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+connectk-core = { path = "../../core" }
+
+# Thin LTO (not fat): the Tauri/GTK dependency tree is huge, and fat LTO
+# needs several GB of RAM to link. The engine crate still compiles at
+# opt-level 3; the standalone CLI keeps the fat-LTO profile.
+[profile.release]
+opt-level = 3
+lto = "thin"
+panic = "abort"
+strip = true
