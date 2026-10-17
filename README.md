@@ -55,6 +55,10 @@ Build outputs land in `dist/` (`connectk-core.jar`, `connectk-cli.jar`,
 
 # Watch the engine play itself
 ./run-cli.sh selfplay --depth 8 --move-time 300
+
+# Generate an exact opening book (parallel, resumable), then use it
+./run-cli.sh bookgen --width 6 --height 4 --depth 8 --out 6x4-d8.book --threads 4
+./run-cli.sh solve --width 6 --height 4 --mode exact --no-theory --book 6x4-d8.book --time 30000 --nodes 0
 ```
 
 `--mode auto` (default) = theory where published, exact proof when
@@ -129,7 +133,12 @@ well leaves a pure engine library (`./build.sh core`).
   once enough cells are filled / tactical. A primitive one-word
   bitboard fast path (`FastExactSolver`) handles gravity rules at
   millions of nodes/sec: Pons *opening_easy* benchmark positions
-  (~28 empty cells) prove in tens of milliseconds each. The empty
+  (~28 empty cells) prove in tens of milliseconds each. Exact work
+  can also be parallelized (`--threads`) and short-circuited by
+  generated opening books (`bookgen` produces them offline for any
+  fast-path rules, resumable; `--book` uses them) — e.g. a depth-8
+  6x4 book cuts that empty-board proof from 338,533 nodes to 2,250.
+  The empty
   standard board is answered from published theory rather than
   recomputed from scratch. See [docs/PERFORMANCE.md](docs/PERFORMANCE.md)
   for benchmarks and the comparison with the Kite solver.

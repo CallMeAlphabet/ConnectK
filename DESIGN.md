@@ -8,9 +8,11 @@ core/   module connectk.core   — pure engine, depends on java.base only
     model/    Rules, Position (bitboard), Move, Player, Direction, Bits
     eval/     Evaluator (heuristic, used only by the depth-limited solver)
     solver/   ExactSolver, FastExactSolver (one-word gravity fast path),
-              DepthLimitedSolver, ConnectKSolver (facade),
-              SolveRequest, SearchResult, SolveMode, listeners/tokens
-    theory/   TheoryDatabase (published results), TheoryResult
+              ParallelExactSolver, DepthLimitedSolver,
+              ConnectKSolver (facade), SolveRequest, SearchResult,
+              SolveMode, listeners/tokens
+    theory/   TheoryDatabase (published results), TheoryResult,
+              OpeningBook (generated exact books, see CLI bookgen)
   src/test/java/connectk/core/TestMain.java   (zero-dependency test runner)
 
 cli/    module connectk.cli    — headless command-line front end
