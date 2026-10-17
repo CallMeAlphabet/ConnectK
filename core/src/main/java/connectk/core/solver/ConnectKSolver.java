@@ -70,7 +70,7 @@ public final class ConnectKSolver {
             long exactTime = request.mode() == SolveMode.EXACT
                     ? request.timeLimitMillis()
                     : request.exactTimeLimitMillis();
-            exactAttempt = new ExactSolver().solve(
+            exactAttempt = solveExact(
                     position, request.exactNodeLimit(), exactTime, token, listener);
             if (exactAttempt.certainty() == SearchResult.Certainty.PROVEN_EXACT) {
                 return exactAttempt;
@@ -118,6 +118,15 @@ public final class ConnectKSolver {
                             + heuristic.explanation());
         }
         return heuristic;
+    }
+
+    /** Exact search via the fast one-word gravity solver when supported, else the generic solver. */
+    private static SearchResult solveExact(Position position, long nodeLimit, long timeMillis,
+                                           CancellationToken token, SearchListener listener) {
+        if (FastExactSolver.supports(position.rules())) {
+            return new FastExactSolver().solve(position, nodeLimit, timeMillis, token, listener);
+        }
+        return new ExactSolver().solve(position, nodeLimit, timeMillis, token, listener);
     }
 
     private static long elapsed(long startNanos) {
