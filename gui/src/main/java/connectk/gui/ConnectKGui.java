@@ -9,6 +9,7 @@ import connectk.core.solver.ConnectKSolver;
 import connectk.core.solver.SearchResult;
 import connectk.core.solver.SolveMode;
 import connectk.core.solver.SolveRequest;
+import connectk.core.theory.OpeningBook;
 import connectk.core.theory.TheoryDatabase;
 
 import javax.swing.BorderFactory;
@@ -24,7 +25,6 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JSpinner;
 import javax.swing.JTextArea;
-import javax.swing.JTextField;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
@@ -37,7 +37,15 @@ import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.GraphicsEnvironment;
 import java.awt.GridLayout;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 /**
  * Swing front end for the Connect-k engine.
@@ -55,7 +63,10 @@ public final class ConnectKGui {
 
     private enum Purpose { HINT, AI_MOVE }
 
-    private final ConnectKSolver solver = new ConnectKSolver();
+    private ConnectKSolver solver = new ConnectKSolver();
+    private String activeBookName;
+    private final Map<String, OpeningBook> bookCache = new HashMap<>();
+    private boolean applyingPreset;
     private Position position = Position.initial(Rules.standardConnect4());
 
     private JFrame frame;
@@ -71,9 +82,7 @@ public final class ConnectKGui {
     private JComboBox<String> modeBox;
     private JSpinner depthSpinner;
     private JSpinner timeSpinner;
-    private JTextField nodesField;
     private JCheckBox theoryBox;
-    private JCheckBox autoAiBox;
     private JLabel statusLabel;
     private JLabel theoryLabel;
     private JLabel certaintyLabel;
@@ -148,7 +157,9 @@ public final class ConnectKGui {
 
     private JPanel buildTopBar() {
         JPanel top = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 6));
-        top.setBorder(BorderFactory.createTitledBorder("Rules (changing them starts a new game)"));
+        JLabel header = new JLabel("Rules");
+        header.setFont(header.getFont().deriveFont(Font.BOLD));
+        top.add(header);
 
         presetBox = new JComboBox<>(new String[]{
                 "Standard 7x6, K=4",
@@ -180,6 +191,16 @@ public final class ConnectKGui {
         misereBox = new JCheckBox("Misere (line loses)");
         top.add(diagonalsBox);
         top.add(misereBox);
+        // Any manual rule edit turns the preset into "Custom".
+        Runnable markCustom = () -> {
+            if (!applyingPreset) presetBox.setSelectedItem("Custom");
+        };
+        widthSpinner.addChangeListener(e -> markCustom.run());
+        heightSpinner.addChangeListener(e -> markCustom.run());
+        kSpinner.addChangeListener(e -> markCustom.run());
+        placementBox.addActionListener(e -> markCustom.run());
+        diagonalsBox.addActionListener(e -> markCustom.run());
+        misereBox.addActionListener(e -> markCustom.run());
 
         JButton newGame = new JButton("New game");
         newGame.addActionListener(e -> newGame());
@@ -193,15 +214,12 @@ public final class ConnectKGui {
     private JPanel buildSidePanel() {
         JPanel side = new JPanel();
         side.setLayout(new BoxLayout(side, BoxLayout.Y_AXIS));
-        side.setPreferredSize(new Dimension(380, 10));
+        side.setPreferredSize(new Dimension(360, 10));
         side.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
 
         theoryLabel = new JLabel(" ");
-        theoryLabel.setBorder(BorderFactory.createTitledBorder("Published mathematical status"));
-        side.add(wrapFullWidth(theoryLabel));
+        side.add(section("Published mathematical status", theoryLabel));
 
-        JPanel play = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
-        play.setBorder(BorderFactory.createTitledBorder("Players"));
         playModeBox = new JComboBox<>(new String[]{
                 "Human vs Human", "Human vs AI", "AI vs Human", "AI vs AI"});
         playModeBox.setSelectedIndex(1);
@@ -209,20 +227,15 @@ public final class ConnectKGui {
             updateStatus();
             maybeScheduleAi();
         });
-        autoAiBox = new JCheckBox("AI moves automatically", true);
-        play.add(playModeBox);
-        play.add(autoAiBox);
-        side.add(wrapFullWidth(play));
+        side.add(section("Players", playModeBox));
 
         JPanel solverPanel = new JPanel(new GridLayout(0, 2, 6, 4));
-        solverPanel.setBorder(BorderFactory.createTitledBorder("Solver"));
         modeBox = new JComboBox<>(new String[]{
                 "Auto (theory > exact > depth)",
                 "Exact proof only",
                 "Depth-limited only"});
         depthSpinner = new JSpinner(new SpinnerNumberModel(10, 1, 40, 1));
         timeSpinner = new JSpinner(new SpinnerNumberModel(3.0, 0.1, 600.0, 0.5));
-        nodesField = new JTextField("5000000");
         theoryBox = new JCheckBox("Use published theory", true);
         solverPanel.add(new JLabel("Mode:"));
         solverPanel.add(modeBox);
@@ -230,11 +243,9 @@ public final class ConnectKGui {
         solverPanel.add(depthSpinner);
         solverPanel.add(new JLabel("Time limit (s):"));
         solverPanel.add(timeSpinner);
-        solverPanel.add(new JLabel("Node limit:"));
-        solverPanel.add(nodesField);
         solverPanel.add(theoryBox);
         solverPanel.add(new JLabel(""));
-        side.add(wrapFullWidth(solverPanel));
+        side.add(section("Solver", solverPanel));
 
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
         hintButton = new JButton("Analyse / Hint");
@@ -257,25 +268,36 @@ public final class ConnectKGui {
         certaintyLabel.setFont(certaintyLabel.getFont().deriveFont(Font.BOLD));
         side.add(wrapFullWidth(certaintyLabel));
 
-        resultArea = new JTextArea(12, 34);
+        resultArea = new JTextArea(10, 34);
         resultArea.setEditable(false);
         resultArea.setLineWrap(true);
         resultArea.setWrapStyleWord(true);
         resultArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
         JScrollPane resultScroll = new JScrollPane(resultArea);
-        resultScroll.setBorder(BorderFactory.createTitledBorder("Analysis"));
-        side.add(resultScroll);
+        side.add(section("Analysis", resultScroll));
 
-        movesArea = new JTextArea(4, 34);
+        movesArea = new JTextArea(3, 34);
         movesArea.setEditable(false);
         movesArea.setLineWrap(true);
         movesArea.setWrapStyleWord(true);
         movesArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
         JScrollPane movesScroll = new JScrollPane(movesArea);
-        movesScroll.setBorder(BorderFactory.createTitledBorder("Moves"));
-        side.add(movesScroll);
+        side.add(section("Moves", movesScroll));
         side.add(Box.createVerticalGlue());
         return side;
+    }
+
+    /** A clean side-panel section: small bold header over full-width content. */
+    private static JPanel section(String title, java.awt.Component content) {
+        JPanel p = new JPanel(new BorderLayout(0, 4));
+        JLabel header = new JLabel(title);
+        header.setFont(header.getFont().deriveFont(Font.BOLD));
+        p.add(header, BorderLayout.NORTH);
+        p.add(content, BorderLayout.CENTER);
+        p.setMaximumSize(new Dimension(Integer.MAX_VALUE,
+                content.getPreferredSize().height + header.getPreferredSize().height + 18));
+        p.setBorder(BorderFactory.createEmptyBorder(8, 0, 2, 0));
+        return p;
     }
 
     private static JPanel wrapFullWidth(java.awt.Component c) {
@@ -292,6 +314,8 @@ public final class ConnectKGui {
     private void applyPreset() {
         String preset = (String) presetBox.getSelectedItem();
         if (preset == null || preset.startsWith("Custom")) return;
+        applyingPreset = true;
+        try {
         misereBox.setSelected(false);
         diagonalsBox.setSelected(true);
         placementBox.setSelectedIndex(0);
@@ -312,6 +336,9 @@ public final class ConnectKGui {
             setDims(9, 9, 5);
             placementBox.setSelectedIndex(1);
         }
+        } finally {
+            applyingPreset = false;
+        }
         newGame();
     }
 
@@ -331,6 +358,54 @@ public final class ConnectKGui {
                 misereBox.isSelected());
     }
 
+    private static final Pattern BOOK_NAME =
+            Pattern.compile("^(std|nodiag)(\\d+)x(\\d+)(?:-k(\\d+))?-d(\\d+)\\.book$");
+
+    /**
+     * The facade for a game, with a generated opening book attached when
+     * {@code ./books} contains one whose file name encodes exactly these
+     * rules (see books/README.md). Books are never used across rulesets:
+     * their keys are bitboards of one specific board shape.
+     */
+    private ConnectKSolver solverFor(Rules rules) {
+        activeBookName = null;
+        Path dir = Path.of("books");
+        if (!Files.isDirectory(dir)) return new ConnectKSolver();
+        Path best = null;
+        int bestDepth = -1;
+        try (Stream<Path> files = Files.list(dir)) {
+            for (Path f : files.toList()) {
+                Matcher m = BOOK_NAME.matcher(f.getFileName().toString());
+                if (!m.matches()) continue;
+                int w = Integer.parseInt(m.group(2));
+                int h = Integer.parseInt(m.group(3));
+                int k = m.group(4) == null ? 4 : Integer.parseInt(m.group(4));
+                boolean diag = m.group(1).equals("std");
+                Rules bookRules = new Rules(w, h, k, Placement.GRAVITY,
+                        diag ? Rules.allDirections() : Rules.orthogonalDirections(), false);
+                int depth = Integer.parseInt(m.group(5));
+                if (bookRules.equals(rules) && depth > bestDepth) {
+                    best = f;
+                    bestDepth = depth;
+                }
+            }
+        } catch (IOException ignored) {
+            return new ConnectKSolver();
+        }
+        if (best == null) return new ConnectKSolver();
+        final Path chosen = best;
+        OpeningBook book = bookCache.computeIfAbsent(chosen.toString(), key -> {
+            try {
+                return OpeningBook.load(chosen);
+            } catch (IOException e) {
+                return null;
+            }
+        });
+        if (book == null) return new ConnectKSolver();
+        activeBookName = chosen.getFileName() + " (" + book.size() + " entries)";
+        return new ConnectKSolver(book);
+    }
+
     private void newGame() {
         if (aiTimer != null) aiTimer.stop();
         cancelRunningSearch();
@@ -342,6 +417,7 @@ public final class ConnectKGui {
             return;
         }
         position = Position.initial(rules);
+        solver = solverFor(rules);
         boardPanel.setSuggestedMove(null);
         boardPanel.setPosition(position);
         resultArea.setText("");
@@ -367,7 +443,7 @@ public final class ConnectKGui {
 
     private void maybeScheduleAi() {
         if (searching || position.isTerminal()) return;
-        if (autoAiBox.isSelected() && isAiTurn()) aiTimer.restart();
+        if (isAiTurn()) aiTimer.restart();
     }
 
     private void onBoardMove(Move move) {
@@ -422,12 +498,15 @@ public final class ConnectKGui {
         }
         statusLabel.setText(sb.toString() + "   ·   " + position.rules());
 
+        String bookNote = activeBookName == null ? ""
+                : "<br><small>Opening book: " + activeBookName + "</small>";
         TheoryDatabase.lookup(position).ifPresentOrElse(
                 t -> theoryLabel.setText("<html>Proven: <b>" + t.outcomeForSideToMove()
                         + "</b> for the side to move"
                         + (t.pliesToEnd().isPresent() ? ", ends in " + t.pliesToEnd().getAsInt() + " plies" : "")
-                        + "<br><small>" + t.source() + "</small></html>"),
-                () -> theoryLabel.setText("No published mathematical result for this position/ruleset."));
+                        + "<br><small>" + t.source() + "</small>" + bookNote + "</html>"),
+                () -> theoryLabel.setText("<html>No published mathematical result for this position/ruleset."
+                        + bookNote + "</html>"));
 
         StringBuilder moves = new StringBuilder();
         var history = position.moveHistory();
@@ -450,17 +529,9 @@ public final class ConnectKGui {
         };
         int depth = (Integer) depthSpinner.getValue();
         long millis = Math.round(((Number) timeSpinner.getValue()).doubleValue() * 1000.0);
-        long nodes = 0;
-        String nodesText = nodesField.getText().trim();
-        if (!nodesText.isEmpty()) {
-            try {
-                nodes = Long.parseLong(nodesText);
-            } catch (NumberFormatException e) {
-                throw new IllegalArgumentException("Node limit must be an integer (0 = unlimited)");
-            }
-        }
         long exactMillis = mode == SolveMode.AUTO ? Math.min(2_000, millis) : millis;
-        return new SolveRequest(mode, depth, millis, nodes, exactMillis, nodes, theoryBox.isSelected());
+        // GUI searches are time-governed; node limits live in the CLI (0 = unlimited).
+        return new SolveRequest(mode, depth, millis, 0, exactMillis, 0, theoryBox.isSelected());
     }
 
     private void cancelRunningSearch() {
@@ -534,20 +605,20 @@ public final class ConnectKGui {
         Color bg;
         switch (result.certainty()) {
             case PROVEN_EXACT -> {
-                label = "✓ PROVEN by exact search";
+                label = "PROVEN — exact search";
                 bg = new Color(46, 125, 50);
             }
             case PROVEN_BY_THEORY -> {
-                label = "✓ PROVEN by published theory"
+                label = "PROVEN — published theory"
                         + (result.moveIsProvenOptimal() ? " (move proven optimal)" : " (move from heuristic search)");
                 bg = new Color(0, 105, 120);
             }
             case HEURISTIC_DEPTH_LIMITED -> {
-                label = "~ Heuristic (depth " + result.depthReached() + ") — NOT a proof";
+                label = "Heuristic (depth " + result.depthReached() + ") — NOT a proof";
                 bg = new Color(230, 126, 34);
             }
             default -> {
-                label = "? Unknown — budget exhausted";
+                label = "Unknown — budget exhausted";
                 bg = new Color(183, 28, 28);
             }
         }
