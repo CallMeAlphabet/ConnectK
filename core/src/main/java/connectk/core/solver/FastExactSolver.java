@@ -120,6 +120,43 @@ public final class FastExactSolver {
         this.maxTtCapacity = maxTtCapacity;
     }
 
+    /** Canonical one-word boards for a position: side-to-move stones, all stones, mirroring applied. */
+    public record CanonicalBoards(long cur, long mask, boolean flipped) {
+    }
+
+    /**
+     * The mirror-canonical {@code (cur, mask)} key this solver uses
+     * internally (and opening books are keyed by), for a position whose
+     * rules {@link #supports(Rules)}.
+     */
+    public static CanonicalBoards encodeCanonical(Position position) {
+        Rules rules = position.rules();
+        Player side = position.sideToMove();
+        long cur = position.stoneBits(side)[0];
+        long mask = cur | position.stoneBits(side.other())[0];
+        if (!rules.mirrorSymmetric()) return new CanonicalBoards(cur, mask, false);
+        int width = rules.width();
+        int stride = rules.height() + 1;
+        long mMask = mirrorBits(mask, width, stride);
+        int cmp = Long.compareUnsigned(mMask, mask);
+        if (cmp < 0) return new CanonicalBoards(mirrorBits(cur, width, stride), mMask, true);
+        if (cmp == 0) {
+            long mCur = mirrorBits(cur, width, stride);
+            if (Long.compareUnsigned(mCur, cur) < 0) return new CanonicalBoards(mCur, mMask, true);
+        }
+        return new CanonicalBoards(cur, mask, false);
+    }
+
+    private static long mirrorBits(long bits, int width, int stride) {
+        long colMask = stride >= 64 ? -1L : (1L << stride) - 1L;
+        long out = 0L;
+        for (int c = 0; c < width; c++) {
+            long chunk = (bits >>> (c * stride)) & colMask;
+            out |= chunk << ((width - 1 - c) * stride);
+        }
+        return out;
+    }
+
     /**
      * Attach a generated opening book. Positions in the book are answered
      * exactly without search (the book was itself produced by exact
@@ -141,39 +178,7 @@ public final class FastExactSolver {
         if (!supports(position.rules())) {
             throw new IllegalArgumentException("FastExactSolver does not support rules: " + position.rules());
         }
-        this.rules = position.rules();
-        this.width = rules.width();
-        this.height = rules.height();
-        this.connect = rules.connect();
-        this.cells = rules.cells();
-        this.stride = rules.stride();
-        this.infinity = cells + 2;
-        this.boardMask = rules.boardMask()[0];
-        this.mirrorSymmetric = rules.mirrorSymmetric();
-        Direction[] dirs = rules.directions().toArray(new Direction[0]);
-        this.shifts = new int[dirs.length];
-        for (int i = 0; i < dirs.length; i++) shifts[i] = dirs[i].shift(stride);
-
-        Player side = position.sideToMove();
-        this.cur = position.stoneBits(side)[0];
-        this.mask = cur | position.stoneBits(side.other())[0];
-        this.heights = new int[width];
-        for (int c = 0; c < width; c++) heights[c] = position.columnCount(c);
-        this.moves = position.movesPlayed();
-        initTable(cells - moves);
-        this.moveCols = new int[cells + 1][Math.max(1, width)];
-        this.moveScores = new int[cells + 1][Math.max(1, width)];
-        this.rootBestCol = -1;
-        this.rootMoveProven = true;
-
-        this.nodes = 0;
-        this.nodeLimit = nodeLimit;
-        this.token = token == null ? CancellationToken.NONE : token;
-        this.listener = listener == null ? SearchListener.NONE : listener;
-        this.startNanos = System.nanoTime();
-        this.deadlineNanos = timeLimitMillis > 0
-                ? startNanos + timeLimitMillis * 1_000_000L
-                : Long.MAX_VALUE;
+        initState(position, nodeLimit, timeLimitMillis, token, listener);
 
         if (position.isTerminal()) {
             int score = terminalScore(position);
@@ -218,6 +223,77 @@ public final class FastExactSolver {
     // ------------------------------------------------------------------
     // Search
     // ------------------------------------------------------------------
+
+
+    /** Outcome of a bounded (window) search: fail-soft value, abort flag, node count. */
+    public record BoundResult(int value, boolean aborted, long nodes) {
+    }
+
+    /**
+     * Fail-soft bounded search of a position with window
+     * {@code (alpha, beta)} — typically a null window
+     * ({@code beta = alpha + 1}) to test "is the exact score at least
+     * beta?". Returns a value {@code <= alpha} (proven upper bound),
+     * {@code >= beta} (proven lower bound), or the exact score in
+     * between; {@code aborted} is set instead of a meaningful value when
+     * the budget runs out. This is the building block
+     * {@link ParallelExactSolver} uses for parallel refutations, which
+     * are typically far cheaper than exact proofs.
+     */
+    public BoundResult searchBound(Position position, int alpha, int beta,
+                                   long nodeLimit, long timeLimitMillis,
+                                   CancellationToken token) {
+        if (!supports(position.rules())) {
+            throw new IllegalArgumentException("FastExactSolver does not support rules: " + position.rules());
+        }
+        if (alpha >= beta) throw new IllegalArgumentException("need alpha < beta");
+        initState(position, nodeLimit, timeLimitMillis, token, SearchListener.NONE);
+        if (position.isTerminal()) {
+            return new BoundResult(terminalScore(position), false, 0);
+        }
+        try {
+            return new BoundResult(negamax(alpha, beta), false, nodes);
+        } catch (SearchAbortedException aborted) {
+            return new BoundResult(0, true, nodes);
+        }
+    }
+
+    private void initState(Position position, long nodeLimit, long timeLimitMillis,
+                           CancellationToken token, SearchListener listener) {
+        this.rules = position.rules();
+        this.width = rules.width();
+        this.height = rules.height();
+        this.connect = rules.connect();
+        this.cells = rules.cells();
+        this.stride = rules.stride();
+        this.infinity = cells + 2;
+        this.boardMask = rules.boardMask()[0];
+        this.mirrorSymmetric = rules.mirrorSymmetric();
+        Direction[] dirs = rules.directions().toArray(new Direction[0]);
+        this.shifts = new int[dirs.length];
+        for (int i = 0; i < dirs.length; i++) shifts[i] = dirs[i].shift(stride);
+
+        Player side = position.sideToMove();
+        this.cur = position.stoneBits(side)[0];
+        this.mask = cur | position.stoneBits(side.other())[0];
+        this.heights = new int[width];
+        for (int c = 0; c < width; c++) heights[c] = position.columnCount(c);
+        this.moves = position.movesPlayed();
+        initTable(cells - moves);
+        this.moveCols = new int[cells + 1][Math.max(1, width)];
+        this.moveScores = new int[cells + 1][Math.max(1, width)];
+        this.rootBestCol = -1;
+        this.rootMoveProven = true;
+
+        this.nodes = 0;
+        this.nodeLimit = nodeLimit;
+        this.token = token == null ? CancellationToken.NONE : token;
+        this.listener = listener == null ? SearchListener.NONE : listener;
+        this.startNanos = System.nanoTime();
+        this.deadlineNanos = timeLimitMillis > 0
+                ? startNanos + timeLimitMillis * 1_000_000L
+                : Long.MAX_VALUE;
+    }
 
     private int searchRoot() {
         nodes++;
@@ -616,13 +692,7 @@ public final class FastExactSolver {
     }
 
     private long mirrorBits(long bits) {
-        long colMask = stride >= 64 ? -1L : (1L << stride) - 1L;
-        long out = 0L;
-        for (int c = 0; c < width; c++) {
-            long chunk = (bits >>> (c * stride)) & colMask;
-            out |= chunk << ((width - 1 - c) * stride);
-        }
-        return out;
+        return mirrorBits(bits, width, stride);
     }
 
     // ------------------------------------------------------------------

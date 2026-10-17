@@ -29,9 +29,10 @@ import java.util.OptionalInt;
 public final class ConnectKSolver {
 
     private final OpeningBook book;
+    private final int threads;
 
     public ConnectKSolver() {
-        this(null);
+        this(null, 1);
     }
 
     /**
@@ -40,7 +41,19 @@ public final class ConnectKSolver {
      *             positions); may be null
      */
     public ConnectKSolver(OpeningBook book) {
+        this(book, 1);
+    }
+
+    /**
+     * @param book    optional generated opening book; may be null
+     * @param threads worker threads for exact proving (1 = sequential);
+     *                values &gt; 1 use {@link ParallelExactSolver}'s
+     *                frontier splitting for the exact stage
+     */
+    public ConnectKSolver(OpeningBook book, int threads) {
+        if (threads < 1) throw new IllegalArgumentException("threads must be >= 1");
         this.book = book;
+        this.threads = threads;
     }
 
     public SearchResult solve(Position position, SolveRequest request) {
@@ -139,6 +152,10 @@ public final class ConnectKSolver {
     /** Exact search via the fast one-word gravity solver when supported, else the generic solver. */
     private SearchResult solveExact(Position position, long nodeLimit, long timeMillis,
                                            CancellationToken token, SearchListener listener) {
+        if (threads > 1) {
+            return new ParallelExactSolver(threads, book)
+                    .solve(position, nodeLimit, timeMillis, token, listener);
+        }
         if (FastExactSolver.supports(position.rules())) {
             FastExactSolver fast = new FastExactSolver();
             fast.setOpeningBook(book);
