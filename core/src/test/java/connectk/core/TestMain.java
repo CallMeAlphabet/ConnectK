@@ -61,6 +61,7 @@ public final class TestMain {
         test("exact vs brute-force reference on random small positions", TestMain::exactVsBruteForce);
         test("fast exact vs generic exact on random gravity positions", TestMain::fastVsGeneric);
         test("fast exact: known results (5x4 draw, 6x4 loss, diagonals flip)", TestMain::fastKnownResults);
+        test("claim-even bound never exceeds the exact score (soundness)", TestMain::claimEvenBoundSound);
         test("parallel exact matches sequential (variants incl. generic workers)", TestMain::parallelVsSequential);
         test("parallel exact returns UNKNOWN on tiny time budget", TestMain::parallelTinyBudgetUnknown);
         test("opening book: round-trip gives identical proven results", TestMain::openingBookRoundTrip);
@@ -415,6 +416,125 @@ public final class TestMain {
         assertEquals(6, std.pliesToEnd().orElseThrow(), "standard: loss in 6 plies");
         SearchResult noDiag = fastExact(playCols(Rules.gravity(7, 6, 4, false), seq), 0, 60_000);
         assertEquals(Outcome.DRAW, noDiag.outcomeForSideToMove().orElseThrow(), "no-diagonals: proven draw");
+    }
+
+    private static void claimEvenBoundSound() {
+        // Empty standard board is a first-player win: the bound must not fire.
+        assertEquals(Integer.MAX_VALUE,
+                FastExactSolver.claimEvenUpperBound(Position.initial(Rules.standardConnect4())),
+                "no claim-even cap on the empty board");
+        // Odd height: rule inapplicable by construction.
+        assertEquals(Integer.MAX_VALUE,
+                FastExactSolver.claimEvenUpperBound(playCols(Rules.gravity(6, 5, 4, true), 2, 2, 3)),
+                "odd height -> no bound");
+
+        Random rng = new Random(2026);
+        int fired = 0;
+        int negative = 0;
+        // Playout-based sampling for the big boards: claim-even's habitat is
+        // positions arising along games (claim-style or random), near the end.
+        for (Rules r : List.of(Rules.standardConnect4(),
+                Rules.gravity(7, 6, 4, false), Rules.gravity(7, 6, 5, true))) {
+            int[] stats = checkClaimEvenAlongPlayouts(r, rng, 12);
+            fired += stats[0];
+            negative += stats[1];
+        }
+        // Random near-end positions for the smaller even-height variants.
+        for (Rules r : List.of(Rules.gravity(6, 6, 5, true),
+                Rules.gravity(6, 4, 4, true), Rules.gravity(5, 4, 4, false))) {
+            for (int trial = 0; trial < 60; trial++) {
+                Position pos = randomPosition(r, rng, Math.max(6, r.cells() - 12));
+                if (trial % 2 == 0) topUpToEvenColumns(pos, rng);
+                if (pos.isTerminal()) continue;
+                int bound = FastExactSolver.claimEvenUpperBound(pos);
+                if (bound == Integer.MAX_VALUE) continue;
+                SearchResult exact = exact(pos, 20_000_000, 30_000);
+                assertEquals(SearchResult.Certainty.PROVEN_EXACT, exact.certainty(),
+                        "reference exact must finish\n" + pos + "\nrules=" + r);
+                assertTrue(exact.score() <= bound,
+                        "claim-even bound violated: bound=" + bound + " exact=" + exact.score()
+                                + "\n" + pos + "\nrules=" + r);
+                fired++;
+                if (bound < 0) negative++;
+            }
+        }
+        // Search with the bound enabled still agrees with the generic solver.
+        for (Rules r : List.of(Rules.standardConnect4(), Rules.gravity(7, 6, 4, false),
+                Rules.gravity(6, 6, 5, true), Rules.gravity(6, 4, 4, true))) {
+            for (int trial = 0; trial < 10; trial++) {
+                Position pos = randomPosition(r, rng, Math.max(6, r.cells() - 13));
+                if (pos.isTerminal()) continue;
+                assertEquals(exact(pos, 20_000_000, 30_000).score(),
+                        fastExact(pos, 20_000_000, 30_000).score(),
+                        "fast(claim-even)/generic mismatch\n" + pos + "\nrules=" + r);
+            }
+        }
+        assertTrue(fired >= 25, "bound exercised often enough: fired=" + fired);
+        assertTrue(negative >= 3, "negative (claimer-win) caps exercised: " + negative);
+    }
+
+    /**
+     * Play random / claim-style games under {@code r}; whenever the claim-even
+     * bound fires at a position with 7..14 empties, verify it against the
+     * generic exact score. Returns {fired, negative} after at least
+     * {@code targetChecked} exact checks (or a game cap).
+     */
+    private static int[] checkClaimEvenAlongPlayouts(Rules r, Random rng, int targetChecked) {
+        int fired = 0;
+        int negative = 0;
+        int checked = 0;
+        for (int game = 0; game < 600 && checked < targetChecked; game++) {
+            Position pos = Position.initial(r);
+            int lastColumn = -1;
+            int mode = game % 3;
+            while (!pos.isTerminal()) {
+                int empties = r.cells() - pos.movesPlayed();
+                if (empties >= 7 && empties <= 14) {
+                    int bound = FastExactSolver.claimEvenUpperBound(pos);
+                    if (bound != Integer.MAX_VALUE) {
+                        SearchResult exact = exact(pos, 20_000_000, 30_000);
+                        if (exact.certainty() == SearchResult.Certainty.PROVEN_EXACT) {
+                            assertTrue(exact.score() <= bound,
+                                    "claim-even bound violated: bound=" + bound
+                                            + " exact=" + exact.score() + "\n" + pos + "\nrules=" + r);
+                            fired++;
+                            checked++;
+                            if (bound < 0) negative++;
+                            if (checked >= targetChecked) break;
+                        }
+                    }
+                }
+                List<Move> legal = pos.legalMoves();
+                if (legal.isEmpty()) break;
+                Move chosen = null;
+                boolean claimerTurn = (mode == 1 && pos.movesPlayed() % 2 == 1)
+                        || (mode == 2 && pos.movesPlayed() % 2 == 0);
+                if (claimerTurn && lastColumn >= 0) {
+                    for (Move m : legal) {
+                        if (m.column() == lastColumn) {
+                            chosen = m;
+                            break;
+                        }
+                    }
+                }
+                if (chosen == null) chosen = legal.get(rng.nextInt(legal.size()));
+                pos.play(chosen);
+                lastColumn = chosen.column();
+            }
+        }
+        return new int[]{fired, negative};
+    }
+
+    /** Play random moves in odd-height columns until at most one column has odd height. */
+    private static void topUpToEvenColumns(Position pos, Random rng) {
+        for (int step = 0; step < 12 && !pos.isTerminal(); step++) {
+            List<Integer> odd = new ArrayList<>();
+            for (int c = 0; c < pos.rules().width(); c++) {
+                if (pos.columnCount(c) % 2 == 1 && pos.columnCount(c) < pos.rules().height()) odd.add(c);
+            }
+            if (odd.size() <= 1) return;
+            pos.playColumn(odd.get(rng.nextInt(odd.size())));
+        }
     }
 
     private static SearchResult parallelExact(Position p, int threads, long nodes, long millis) {
