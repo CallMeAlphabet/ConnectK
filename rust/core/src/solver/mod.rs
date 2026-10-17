@@ -314,3 +314,40 @@ pub fn center_out_order(width: i32) -> Vec<i32> {
     cols.sort_by_key(|&c| (2 * c - (width - 1)).abs());
     cols
 }
+
+impl core::fmt::Display for SearchResult {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut s = match self.certainty {
+            Certainty::ProvenExact => "PROVEN (exact search)".to_string(),
+            Certainty::ProvenByTheory => "PROVEN (published theory)".to_string(),
+            Certainty::HeuristicDepthLimited => {
+                format!("Heuristic, depth {} (not a proof)", self.depth_reached)
+            }
+            Certainty::UnknownLimitReached => "Unknown (limit reached)".to_string(),
+        };
+        if let Some(o) = self.outcome {
+            s.push_str(&format!(" | outcome for side to move: {o}"));
+        }
+        if let Some(m) = self.best_move {
+            s.push_str(&format!(
+                " | best move: {}{}",
+                m.notation(),
+                if self.move_is_proven_optimal { " (proven optimal)" } else { "" }
+            ));
+        }
+        s.push_str(&format!(" | score: {}", self.score));
+        if let Some(p) = self.plies_to_end {
+            s.push_str(&format!(" | ends in {p} plies"));
+        }
+        s.push_str(&format!(" | nodes: {} | {} ms", self.nodes, self.elapsed_millis));
+        if !self.principal_line.is_empty() {
+            s.push_str("\n  PV: ");
+            let parts: Vec<String> =
+                self.principal_line.iter().map(|m| m.notation()).collect();
+            s.push_str(&parts.join(" "));
+        }
+        s.push_str("\n  ");
+        s.push_str(&self.explanation);
+        write!(f, "{s}")
+    }
+}

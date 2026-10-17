@@ -22,7 +22,7 @@ use std::time::Instant;
 
 const NO_LOWER: i32 = -128;
 const NO_UPPER: i32 = 127;
-const DEFAULT_TT_CAPACITY: usize = 1 << 21; // ~2M entries
+const DEFAULT_TT_CAPACITY: usize = 1 << 22; // ~4M entries (measured faster on hard openings; small solves still get small tables via the sizing ladder)
 const MAX_PROBES: usize = 64;
 
 fn claim_even_enabled() -> bool {

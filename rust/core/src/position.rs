@@ -600,23 +600,22 @@ impl core::fmt::Display for Position {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut s = String::new();
         for r in (0..self.rules.height).rev() {
-            s.push('|');
             for c in 0..self.rules.width {
-                let ch = match self.owner_at(c, r) {
+                if c > 0 {
+                    s.push(' ');
+                }
+                s.push(match self.owner_at(c, r) {
                     Some(p) => p.symbol(),
                     None => '.',
-                };
-                s.push(ch);
-                s.push('|');
+                });
             }
             s.push('\n');
         }
-        s.push(' ');
         for c in 0..self.rules.width {
             if c > 0 {
                 s.push(' ');
             }
-            s.push_str(&(c + 1).to_string());
+            s.push_str(&((c + 1) % 10).to_string());
         }
         write!(f, "{s}")
     }
