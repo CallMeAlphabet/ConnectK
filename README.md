@@ -124,12 +124,15 @@ well leaves a pure engine library (`./build.sh core`).
 
 ## What the solver can and cannot do
 
-- Exact proofs: small boards from scratch (5x4 draw in ~0.2 s, 6x4
-  second-player win in ~2 s), plus standard 7x6 positions once enough
-  cells are filled / tactical (roughly the last ~25 empty cells, position
-  dependent). The empty standard board is answered from published
-  theory; a from-scratch proof of it needs billions of nodes even in
-  optimized C++, so AUTO mode does not attempt it.
+- Exact proofs: small boards from scratch (5x4 draw, 6x4
+  second-player win — both near-instant), plus standard 7x6 positions
+  once enough cells are filled / tactical. A primitive one-word
+  bitboard fast path (`FastExactSolver`) handles gravity rules at
+  millions of nodes/sec: Pons *opening_easy* benchmark positions
+  (~28 empty cells) prove in tens of milliseconds each. The empty
+  standard board is answered from published theory rather than
+  recomputed from scratch. See [docs/PERFORMANCE.md](docs/PERFORMANCE.md)
+  for benchmarks and the comparison with the Kite solver.
 - Depth-limited play uses an evaluation over all potential k-lines
   (gravity-aware threat support, playable-threat boosts). It plays
   sensibly at depth 8–12 on 7x6 but is *not* perfect — and says so.
