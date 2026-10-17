@@ -1,0 +1,12 @@
+[package]
+name = "connectk-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Command-line front end for the ConnectK solver"
+
+[[bin]]
+name = "connectk"
+path = "src/main.rs"
+
+[dependencies]
+connectk-core = { path = "../core" }
