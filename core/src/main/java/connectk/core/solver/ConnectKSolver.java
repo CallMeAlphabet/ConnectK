@@ -2,6 +2,7 @@ package connectk.core.solver;
 
 import connectk.core.model.Outcome;
 import connectk.core.model.Position;
+import connectk.core.theory.OpeningBook;
 import connectk.core.theory.TheoryDatabase;
 import connectk.core.theory.TheoryResult;
 
@@ -26,6 +27,34 @@ import java.util.OptionalInt;
  * Stateless and thread-safe; each call builds its own search objects.
  */
 public final class ConnectKSolver {
+
+    private final OpeningBook book;
+    private final int threads;
+
+    public ConnectKSolver() {
+        this(null, 1);
+    }
+
+    /**
+     * @param book optional generated opening book used by the fast exact
+     *             solver (exact scores without search for covered
+     *             positions); may be null
+     */
+    public ConnectKSolver(OpeningBook book) {
+        this(book, 1);
+    }
+
+    /**
+     * @param book    optional generated opening book; may be null
+     * @param threads worker threads for exact proving (1 = sequential);
+     *                values &gt; 1 use {@link ParallelExactSolver}'s
+     *                frontier splitting for the exact stage
+     */
+    public ConnectKSolver(OpeningBook book, int threads) {
+        if (threads < 1) throw new IllegalArgumentException("threads must be >= 1");
+        this.book = book;
+        this.threads = threads;
+    }
 
     public SearchResult solve(Position position, SolveRequest request) {
         return solve(position, request, CancellationToken.NONE, SearchListener.NONE);
@@ -121,10 +150,16 @@ public final class ConnectKSolver {
     }
 
     /** Exact search via the fast one-word gravity solver when supported, else the generic solver. */
-    private static SearchResult solveExact(Position position, long nodeLimit, long timeMillis,
+    private SearchResult solveExact(Position position, long nodeLimit, long timeMillis,
                                            CancellationToken token, SearchListener listener) {
+        if (threads > 1) {
+            return new ParallelExactSolver(threads, book)
+                    .solve(position, nodeLimit, timeMillis, token, listener);
+        }
         if (FastExactSolver.supports(position.rules())) {
-            return new FastExactSolver().solve(position, nodeLimit, timeMillis, token, listener);
+            FastExactSolver fast = new FastExactSolver();
+            fast.setOpeningBook(book);
+            return fast.solve(position, nodeLimit, timeMillis, token, listener);
         }
         return new ExactSolver().solve(position, nodeLimit, timeMillis, token, listener);
     }

@@ -13,14 +13,22 @@ import connectk.core.solver.ConnectKSolver;
 import connectk.core.solver.DepthLimitedSolver;
 import connectk.core.solver.ExactSolver;
 import connectk.core.solver.FastExactSolver;
+import connectk.core.solver.ParallelExactSolver;
 import connectk.core.solver.SearchListener;
 import connectk.core.solver.SearchResult;
 import connectk.core.solver.SolveRequest;
+import connectk.core.theory.OpeningBook;
 import connectk.core.theory.TheoryDatabase;
 import connectk.core.theory.TheoryResult;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.Random;
 
@@ -53,6 +61,9 @@ public final class TestMain {
         test("exact vs brute-force reference on random small positions", TestMain::exactVsBruteForce);
         test("fast exact vs generic exact on random gravity positions", TestMain::fastVsGeneric);
         test("fast exact: known results (5x4 draw, 6x4 loss, diagonals flip)", TestMain::fastKnownResults);
+        test("parallel exact matches sequential (variants incl. generic workers)", TestMain::parallelVsSequential);
+        test("parallel exact returns UNKNOWN on tiny time budget", TestMain::parallelTinyBudgetUnknown);
+        test("opening book: round-trip gives identical proven results", TestMain::openingBookRoundTrip);
         test("depth-limited: takes immediate win", TestMain::depthTakesWin);
         test("depth-limited: blocks immediate threat", TestMain::depthBlocks);
         test("depth-limited result is labelled heuristic", TestMain::depthLabelledHeuristic);
@@ -404,6 +415,124 @@ public final class TestMain {
         assertEquals(6, std.pliesToEnd().orElseThrow(), "standard: loss in 6 plies");
         SearchResult noDiag = fastExact(playCols(Rules.gravity(7, 6, 4, false), seq), 0, 60_000);
         assertEquals(Outcome.DRAW, noDiag.outcomeForSideToMove().orElseThrow(), "no-diagonals: proven draw");
+    }
+
+    private static SearchResult parallelExact(Position p, int threads, long nodes, long millis) {
+        return new ParallelExactSolver(threads).solve(p, nodes, millis,
+                CancellationToken.NONE, SearchListener.NONE);
+    }
+
+    private static void parallelVsSequential() {
+        // Known empty-board results through the parallel path.
+        SearchResult draw = parallelExact(Position.initial(Rules.gravity(5, 4, 4, true)), 2, 0, 30_000);
+        assertEquals(SearchResult.Certainty.PROVEN_EXACT, draw.certainty(), "parallel 5x4 proven");
+        assertEquals(Outcome.DRAW, draw.outcomeForSideToMove().orElseThrow(), "parallel 5x4 draw");
+        SearchResult loss = parallelExact(Position.initial(Rules.gravity(6, 4, 4, true)), 2, 0, 60_000);
+        assertEquals(Outcome.LOSS, loss.outcomeForSideToMove().orElseThrow(), "parallel 6x4 loss");
+
+        // Free placement (generic workers): tic-tac-toe is a draw.
+        SearchResult ttt = parallelExact(Position.initial(
+                new Rules(3, 3, 3, Placement.FREE, EnumSet.allOf(Direction.class), false)), 2, 0, 30_000);
+        assertEquals(Outcome.DRAW, ttt.outcomeForSideToMove().orElseThrow(), "parallel tic-tac-toe draw");
+
+        // Random positions: 2-thread result must equal the sequential one,
+        // including misère (generic workers + terminal frontier values).
+        List<Rules> variants = List.of(
+                Rules.standardConnect4(),
+                Rules.gravity(7, 6, 4, false),
+                Rules.gravity(5, 4, 4, true).withMisere(true),
+                new Rules(4, 3, 3, Placement.FREE, EnumSet.allOf(Direction.class), false));
+        Random rng = new Random(7);
+        int compared = 0;
+        for (Rules r : variants) {
+            for (int trial = 0; trial < 8; trial++) {
+                int target = Math.max(4, r.cells() - 12);
+                Position pos = randomPosition(r, rng, target);
+                if (pos.isTerminal()) continue;
+                SearchResult seq = parallelExact(pos, 1, 20_000_000, 30_000);
+                SearchResult par = parallelExact(pos, 2, 20_000_000, 30_000);
+                assertEquals(SearchResult.Certainty.PROVEN_EXACT, par.certainty(),
+                        "parallel must finish\n" + pos + "\nrules=" + r);
+                assertEquals(seq.score(), par.score(),
+                        "parallel/sequential score mismatch\n" + pos + "\nrules=" + r);
+                Position cursor = pos.copy();
+                for (Move m : par.principalVariation()) cursor.play(m); // throws if illegal
+                compared++;
+            }
+        }
+        assertTrue(compared >= 20, "enough parallel comparisons ran: " + compared);
+    }
+
+    private static void parallelTinyBudgetUnknown() {
+        Position p = playCols(Rules.standardConnect4(), 3, 3);
+        SearchResult res = parallelExact(p, 2, 0, 1);
+        assertEquals(SearchResult.Certainty.UNKNOWN_LIMIT_REACHED, res.certainty(),
+                "1 ms parallel budget -> unknown, got " + res);
+    }
+
+    private static void openingBookRoundTrip() {
+        Rules r = Rules.gravity(5, 4, 4, true);
+        int bookDepth = 6;
+        // Collect canonical-unique positions at exactly bookDepth plies.
+        Map<String, Position> reps = new LinkedHashMap<>();
+        Random rng = new Random(42);
+        while (reps.size() < 40) {
+            Position pos = randomPosition(r, rng, bookDepth);
+            if (pos.isTerminal() || pos.movesPlayed() != bookDepth) continue;
+            var canon = FastExactSolver.encodeCanonical(pos);
+            reps.putIfAbsent(canon.cur() + ":" + canon.mask(), pos.copy());
+        }
+        // Generate entries with the sequential exact solver, write a book file.
+        List<String> lines = new ArrayList<>();
+        lines.add("# connectk-book v1 depth=" + bookDepth);
+        Map<String, SearchResult> expected = new LinkedHashMap<>();
+        for (Map.Entry<String, Position> e : reps.entrySet()) {
+            Position pos = e.getValue();
+            SearchResult res = fastExact(pos, 0, 30_000);
+            assertEquals(SearchResult.Certainty.PROVEN_EXACT, res.certainty(), "bookgen position proven");
+            expected.put(e.getKey(), res);
+            var canon = FastExactSolver.encodeCanonical(pos);
+            int col = res.bestMove().orElseThrow().column();
+            int canonicalCol = canon.flipped() ? r.width() - 1 - col : col;
+            lines.add(OpeningBook.formatEntry(canon.cur(), canon.mask(), res.score(), canonicalCol));
+        }
+        OpeningBook book;
+        try {
+            Path tmp = Files.createTempFile("connectk-test", ".book");
+            Files.write(tmp, lines);
+            book = OpeningBook.load(tmp);
+            Files.deleteIfExists(tmp);
+        } catch (IOException ioe) {
+            throw new UncheckedIOException(ioe);
+        }
+        assertEquals(reps.size(), book.size(), "book entry count");
+        assertEquals(bookDepth, book.depth(), "book depth");
+        // Every stored position must now be answered identically, without search.
+        for (Map.Entry<String, Position> e : reps.entrySet()) {
+            FastExactSolver withBook = new FastExactSolver();
+            withBook.setOpeningBook(book);
+            SearchResult res = withBook.solve(e.getValue(), 0, 30_000,
+                    CancellationToken.NONE, SearchListener.NONE);
+            SearchResult exp = expected.get(e.getKey());
+            assertEquals(SearchResult.Certainty.PROVEN_EXACT, res.certainty(), "book hit proven");
+            assertEquals(exp.score(), res.score(), "book score matches search");
+            assertTrue(res.moveIsProvenOptimal(), "book move certified optimal");
+            assertTrue(res.nodes() <= 2, "book hit should not search, nodes=" + res.nodes());
+            // The book's move must actually achieve the score: solve the child.
+            Position child = e.getValue().copy();
+            child.play(res.bestMove().orElseThrow());
+            if (!child.isTerminal()) {
+                SearchResult childRes = fastExact(child, 0, 30_000);
+                assertEquals(-exp.score(), childRes.score(), "book move achieves the score");
+            }
+        }
+        // Positions outside the book still solve normally (book attached).
+        FastExactSolver withBook = new FastExactSolver();
+        withBook.setOpeningBook(book);
+        SearchResult empty = withBook.solve(Position.initial(r), 0, 30_000,
+                CancellationToken.NONE, SearchListener.NONE);
+        assertEquals(Outcome.DRAW, empty.outcomeForSideToMove().orElseThrow(),
+                "5x4 still a draw with book attached");
     }
 
     private static void depthTakesWin() {
