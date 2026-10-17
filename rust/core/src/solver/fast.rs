@@ -87,8 +87,9 @@ pub struct FastExactSolver {
     moves: i32,
     odd_height_columns: i32,
 
-    move_cols: Vec<Vec<i32>>,
-    move_scores: Vec<Vec<i32>>,
+    // Per-ply move scratch, flattened: level * width + i.
+    move_cols: Vec<i32>,
+    move_scores: Vec<i32>,
     prep_count: usize,
     prep_forced: bool,
     prep_forced_score: i32,
@@ -345,8 +346,8 @@ impl FastExactSolver {
         self.odd_height_columns = self.heights.iter().filter(|h| **h & 1 != 0).count() as i32;
         self.init_table(self.cells - self.moves);
         let w = self.width.max(1) as usize;
-        self.move_cols = vec![vec![0; w]; (self.cells + 1) as usize];
-        self.move_scores = vec![vec![0; w]; (self.cells + 1) as usize];
+        self.move_cols = vec![0; w * (self.cells + 1) as usize];
+        self.move_scores = vec![0; w * (self.cells + 1) as usize];
         self.root_best_col = -1;
         self.root_move_proven = true;
         self.nodes = 0;
@@ -387,13 +388,13 @@ impl FastExactSolver {
                 }
             }
         }
-        let level = self.moves as usize;
+        let level = self.moves as usize * self.width.max(1) as usize;
         let n = self.prep_count;
         let mut alpha = -self.infinity;
         let mut best = -self.infinity;
         self.root_best_col = -1;
         for i in 0..n {
-            let col = self.move_cols[level][i];
+            let col = self.move_cols[level + i];
             self.play(col);
             let r = (|| -> Result<i32, Abort> {
                 if i == 0 {
@@ -428,7 +429,7 @@ impl FastExactSolver {
         if self.prep_forced {
             return self.prep_forced_col;
         }
-        let level = self.moves as usize;
+        let level = self.moves as usize * self.width.max(1) as usize;
         let n = self.prep_count;
         let mut tt_col = -1;
         let slot = self.slot_for(key.cur, key.mask);
@@ -450,7 +451,7 @@ impl FastExactSolver {
                 return Ok(tt_col);
             }
             for i in 0..n {
-                let col = self.move_cols[level][i];
+                let col = self.move_cols[level + i];
                 if col == tt_col {
                     continue;
                 }
@@ -459,10 +460,10 @@ impl FastExactSolver {
                 }
             }
             // Safety net: full-window scan.
-            let mut best_col = self.move_cols[level][0];
+            let mut best_col = self.move_cols[level];
             let mut best_val = -self.infinity;
             for i in 0..n {
-                let col = self.move_cols[level][i];
+                let col = self.move_cols[level + i];
                 self.play(col);
                 let r = self.negamax(-self.infinity, self.infinity);
                 self.undo(col);
@@ -482,7 +483,7 @@ impl FastExactSolver {
                 if tt_col >= 0 && self.heights[tt_col as usize] < self.height {
                     tt_col
                 } else {
-                    self.move_cols[level][0]
+                    self.move_cols[level]
                 }
             }
         }
@@ -595,12 +596,12 @@ impl FastExactSolver {
                 beta_orig = beta;
             }
         }
-        let level = self.moves as usize;
+        let level = self.moves as usize * self.width.max(1) as usize;
         let n = self.prep_count;
         let mut best = -self.infinity;
         let mut best_col = -1;
         for i in 0..n {
-            let col = self.move_cols[level][i];
+            let col = self.move_cols[level + i];
             self.play(col);
             let r = (|| -> Result<i32, Abort> {
                 if i == 0 {
@@ -647,11 +648,11 @@ impl FastExactSolver {
         self.prep_forced = false;
         self.prep_min_possible_valid = false;
         let playable = self.playable_mask();
-        if self.winning_spots(self.cur) & playable != 0 {
+        let my_winning = self.winning_spots(self.cur) & playable;
+        if my_winning != 0 {
             self.prep_forced = true;
             self.prep_forced_score = self.cells - self.moves;
-            let w = self.winning_spots(self.cur) & playable;
-            self.prep_forced_col = self.column_of(w);
+            self.prep_forced_col = self.column_of(my_winning);
             return;
         }
         let opp_spots = self.winning_spots(self.mask ^ self.cur);
@@ -663,7 +664,7 @@ impl FastExactSolver {
             self.prep_forced_col = self.column_of(playable);
             return;
         }
-        let level = self.moves as usize;
+        let level = self.moves as usize * self.width.max(1) as usize;
         if opp_count == 1 {
             let block_col = self.column_of(opp_playable);
             let block_idx = block_col * self.stride + self.heights[block_col as usize];
@@ -674,7 +675,7 @@ impl FastExactSolver {
                 self.prep_forced_col = block_col;
                 return;
             }
-            self.move_cols[level][0] = block_col;
+            self.move_cols[level] = block_col;
             self.prep_count = 1;
             self.prep_min_possible_valid = true;
             return;
@@ -722,8 +723,8 @@ impl FastExactSolver {
                 }
             }
             self.undo(c);
-            self.move_cols[level][n] = c;
-            self.move_scores[level][n] = s;
+            self.move_cols[level + n] = c;
+            self.move_scores[level + n] = s;
             n += 1;
         }
         if n == 0 {
@@ -734,16 +735,16 @@ impl FastExactSolver {
         }
         // Insertion sort, best first (stable, tiny n).
         for i in 1..n {
-            let c0 = self.move_cols[level][i];
-            let s0 = self.move_scores[level][i];
+            let c0 = self.move_cols[level + i];
+            let s0 = self.move_scores[level + i];
             let mut j = i as i32 - 1;
-            while j >= 0 && self.move_scores[level][j as usize] < s0 {
-                self.move_cols[level][(j + 1) as usize] = self.move_cols[level][j as usize];
-                self.move_scores[level][(j + 1) as usize] = self.move_scores[level][j as usize];
+            while j >= 0 && self.move_scores[level + j as usize] < s0 {
+                self.move_cols[level + (j + 1) as usize] = self.move_cols[level + j as usize];
+                self.move_scores[level + (j + 1) as usize] = self.move_scores[level + j as usize];
                 j -= 1;
             }
-            self.move_cols[level][(j + 1) as usize] = c0;
-            self.move_scores[level][(j + 1) as usize] = s0;
+            self.move_cols[level + (j + 1) as usize] = c0;
+            self.move_scores[level + (j + 1) as usize] = s0;
         }
         self.prep_count = n;
     }
