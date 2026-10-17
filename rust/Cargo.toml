@@ -12,3 +12,7 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# The property tests run thousands of exact solves; keep them fast.
+[profile.test]
+opt-level = 2
