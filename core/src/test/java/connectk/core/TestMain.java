@@ -12,6 +12,7 @@ import connectk.core.solver.CancellationToken;
 import connectk.core.solver.ConnectKSolver;
 import connectk.core.solver.DepthLimitedSolver;
 import connectk.core.solver.ExactSolver;
+import connectk.core.solver.FastExactSolver;
 import connectk.core.solver.SearchListener;
 import connectk.core.solver.SearchResult;
 import connectk.core.solver.SolveRequest;
@@ -50,6 +51,8 @@ public final class TestMain {
         test("exact: 3x3 free k=3 (tic-tac-toe) is a draw", TestMain::exactTicTacToe);
         test("exact solver returns UNKNOWN on tiny node budget", TestMain::exactBudgetUnknown);
         test("exact vs brute-force reference on random small positions", TestMain::exactVsBruteForce);
+        test("fast exact vs generic exact on random gravity positions", TestMain::fastVsGeneric);
+        test("fast exact: known results (5x4 draw, 6x4 loss, diagonals flip)", TestMain::fastKnownResults);
         test("depth-limited: takes immediate win", TestMain::depthTakesWin);
         test("depth-limited: blocks immediate threat", TestMain::depthBlocks);
         test("depth-limited result is labelled heuristic", TestMain::depthLabelledHeuristic);
@@ -336,6 +339,71 @@ public final class TestMain {
             }
         }
         assertTrue(compared >= 50, "enough comparisons actually ran: " + compared);
+    }
+
+    private static SearchResult fastExact(Position p, long nodes, long millis) {
+        return new FastExactSolver().solve(p, nodes, millis, CancellationToken.NONE, SearchListener.NONE);
+    }
+
+    private static void fastVsGeneric() {
+        assertTrue(FastExactSolver.supports(Rules.standardConnect4()), "fast path supports standard rules");
+        assertTrue(!FastExactSolver.supports(Rules.standardConnect4().withMisere(true)), "no misere fast path");
+        assertTrue(!FastExactSolver.supports(
+                new Rules(4, 4, 3, Placement.FREE, EnumSet.allOf(Direction.class), false)), "no free-placement fast path");
+        assertTrue(!FastExactSolver.supports(Rules.gravity(10, 7, 4, true)), "no multi-word fast path");
+
+        List<Rules> variants = List.of(
+                Rules.standardConnect4(),
+                Rules.gravity(7, 6, 4, false),   // no diagonals
+                Rules.gravity(6, 5, 5, true),    // K=5
+                Rules.gravity(4, 4, 4, true),
+                // Mirror-asymmetric direction set: canonical key must fall back to raw.
+                new Rules(5, 4, 4, Placement.GRAVITY,
+                        EnumSet.of(Direction.VERTICAL, Direction.HORIZONTAL, Direction.DIAGONAL_UP), false));
+        Random rng = new Random(99);
+        int compared = 0;
+        for (Rules r : variants) {
+            assertTrue(FastExactSolver.supports(r), "variant should be fast-supported: " + r);
+            for (int trial = 0; trial < 20; trial++) {
+                int target = Math.max(4, r.cells() - 12);
+                Position p = randomPosition(r, rng, target);
+                if (p.isTerminal()) continue;
+                SearchResult generic = exact(p, 20_000_000, 30_000);
+                SearchResult fast = fastExact(p, 20_000_000, 30_000);
+                assertEquals(SearchResult.Certainty.PROVEN_EXACT, fast.certainty(),
+                        "fast exact must finish\n" + p + "\nrules=" + r);
+                assertEquals(generic.score(), fast.score(),
+                        "fast/generic score mismatch\n" + p + "\nrules=" + r);
+                assertEquals(generic.outcomeForSideToMove(), fast.outcomeForSideToMove(),
+                        "fast/generic outcome mismatch\n" + p + "\nrules=" + r);
+                // PV must be a legal move sequence from this position.
+                Position cursor = p.copy();
+                for (Move m : fast.principalVariation()) {
+                    cursor.play(m); // throws if illegal
+                }
+                compared++;
+            }
+        }
+        assertTrue(compared >= 60, "enough fast/generic comparisons ran: " + compared);
+    }
+
+    private static void fastKnownResults() {
+        SearchResult draw = fastExact(Position.initial(Rules.gravity(5, 4, 4, true)), 0, 30_000);
+        assertEquals(SearchResult.Certainty.PROVEN_EXACT, draw.certainty(), "5x4 proven");
+        assertEquals(Outcome.DRAW, draw.outcomeForSideToMove().orElseThrow(), "5x4 is a draw");
+
+        SearchResult loss = fastExact(Position.initial(Rules.gravity(6, 4, 4, true)), 0, 60_000);
+        assertEquals(SearchResult.Certainty.PROVEN_EXACT, loss.certainty(), "6x4 proven");
+        assertEquals(Outcome.LOSS, loss.outcomeForSideToMove().orElseThrow(), "6x4 is a second-player win");
+
+        // Same position, different rules -> different proven outcome
+        // (1-based columns 4,5,4,4,1,5,1,3,3,5,5,3,2,2,2,3).
+        int[] seq = {3, 4, 3, 3, 0, 4, 0, 2, 2, 4, 4, 2, 1, 1, 1, 2};
+        SearchResult std = fastExact(playCols(Rules.standardConnect4(), seq), 0, 60_000);
+        assertEquals(Outcome.LOSS, std.outcomeForSideToMove().orElseThrow(), "standard: proven loss");
+        assertEquals(6, std.pliesToEnd().orElseThrow(), "standard: loss in 6 plies");
+        SearchResult noDiag = fastExact(playCols(Rules.gravity(7, 6, 4, false), seq), 0, 60_000);
+        assertEquals(Outcome.DRAW, noDiag.outcomeForSideToMove().orElseThrow(), "no-diagonals: proven draw");
     }
 
     private static void depthTakesWin() {

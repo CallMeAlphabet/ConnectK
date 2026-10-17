@@ -4,6 +4,7 @@ import connectk.core.model.Position;
 import connectk.core.model.Rules;
 import connectk.core.solver.CancellationToken;
 import connectk.core.solver.ExactSolver;
+import connectk.core.solver.FastExactSolver;
 import connectk.core.solver.SearchListener;
 import connectk.core.solver.SearchResult;
 
@@ -40,20 +41,21 @@ public final class BenchMain {
 
     public static void main(String[] args) throws IOException {
         if (args.length < 1) {
-            System.err.println("usage: BenchMain <file> [maxPositions] [perPositionMillis]");
+            System.err.println("usage: BenchMain <file> [maxPositions] [perPositionMillis] [generic|fast]");
             System.exit(2);
         }
         Path file = Path.of(args[0]);
         int maxPositions = args.length > 1 ? Integer.parseInt(args[1]) : Integer.MAX_VALUE;
         long perPositionMillis = args.length > 2 ? Long.parseLong(args[2]) : 10_000;
+        boolean fast = args.length > 3 && args[3].equalsIgnoreCase("fast");
 
         List<BenchCase> cases = load(file, maxPositions);
-        System.out.printf("Benchmark: %s (%d positions, %d ms/position budget)%n",
-                file.getFileName(), cases.size(), perPositionMillis);
+        System.out.printf("Benchmark: %s (%d positions, %d ms/position budget, solver=%s)%n",
+                file.getFileName(), cases.size(), perPositionMillis, fast ? "fast" : "generic");
 
         // JIT warm-up on the first few positions (results discarded).
         for (int i = 0; i < Math.min(10, cases.size()); i++) {
-            solve(cases.get(i).position(), Math.min(perPositionMillis, 2_000));
+            solve(cases.get(i).position(), Math.min(perPositionMillis, 2_000), fast);
         }
 
         long totalNodes = 0;
@@ -63,7 +65,7 @@ public final class BenchMain {
         int timeouts = 0;
         long wallStart = System.nanoTime();
         for (BenchCase c : cases) {
-            SearchResult r = solve(c.position(), perPositionMillis);
+            SearchResult r = solve(c.position(), perPositionMillis, fast);
             totalNodes += r.nodes();
             totalSolverMillis += r.elapsedMillis();
             if (r.certainty() == SearchResult.Certainty.PROVEN_EXACT) {
@@ -92,7 +94,15 @@ public final class BenchMain {
         }
     }
 
-    private static SearchResult solve(Position p, long millis) {
+    // Reused across positions: FastExactSolver clears its (lazily
+    // allocated) transposition table at the start of every solve, like
+    // the reset() in Pons's benchmark protocol.
+    private static final FastExactSolver FAST = new FastExactSolver();
+
+    private static SearchResult solve(Position p, long millis, boolean fast) {
+        if (fast) {
+            return FAST.solve(p, 0, millis, CancellationToken.NONE, SearchListener.NONE);
+        }
         return new ExactSolver().solve(p, 0, millis, CancellationToken.NONE, SearchListener.NONE);
     }
 
