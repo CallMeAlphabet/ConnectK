@@ -92,6 +92,7 @@ public final class FastExactSolver {
     private long mask;  // all stones
     private int[] heights;
     private int moves;
+    private int oddHeightColumns; // columns with odd stone count (claim-even filter, maintained in play/undo)
 
     // Per-ply move-ordering scratch (indexed by moves played).
     private int[][] moveCols;
@@ -295,6 +296,8 @@ public final class FastExactSolver {
         this.heights = new int[width];
         for (int c = 0; c < width; c++) heights[c] = position.columnCount(c);
         this.moves = position.movesPlayed();
+        this.oddHeightColumns = 0;
+        for (int c = 0; c < width; c++) if ((heights[c] & 1) != 0) oddHeightColumns++;
         initTable(cells - moves);
         this.moveCols = new int[cells + 1][Math.max(1, width)];
         this.moveScores = new int[cells + 1][Math.max(1, width)];
@@ -603,6 +606,18 @@ public final class FastExactSolver {
             boolean terminalAfter = moves == cells || hasLine(mask ^ cur);
             if (!terminalAfter) {
                 s += Long.bitCount(winningSpots(mask ^ cur)) * 100;
+                // Child TT probe: if the child position already has a stored
+                // upper bound for the opponent, this move is likely strong;
+                // order such moves earlier (cheap refutations first).
+                if (c != prepTtCol && cells - moves > 12) {
+                    CanonicalKey childKey = canonicalKey();
+                    int childSlot = slotFor(childKey.cur, childKey.mask);
+                    if (ttUsed[childSlot] != 0 && ttCur[childSlot] == childKey.cur
+                            && ttMask[childSlot] == childKey.mask) {
+                        int upper = ttUpper(ttData[childSlot]);
+                        if (upper != NO_UPPER) s += (cells - upper) * 30;
+                    }
+                }
             }
             undo(c);
             moveCols[level][n] = c;
@@ -664,12 +679,14 @@ public final class FastExactSolver {
         long bit = 1L << (col * stride + heights[col]);
         cur ^= mask;
         mask |= bit;
-        heights[col]++;
+        if ((heights[col]++ & 1) == 0) oddHeightColumns++;
+        else oddHeightColumns--;
         moves++;
     }
 
     private void undo(int col) {
-        heights[col]--;
+        if ((--heights[col] & 1) == 0) oddHeightColumns--;
+        else oddHeightColumns++;
         moves--;
         long bit = 1L << (col * stride + heights[col]);
         mask ^= bit;
@@ -725,15 +742,17 @@ public final class FastExactSolver {
      * published test sets with the bound enabled.</p>
      */
     private int claimEvenBound() {
-        int oddColumns = 0;
+        int oddColumns = oddHeightColumns;
+        if (oddColumns > 1) return infinity;
         int oddColumn = -1;
-        for (int c = 0; c < width; c++) {
-            if ((heights[c] & 1) != 0) {
-                oddColumns++;
-                oddColumn = c;
+        if (oddColumns == 1) {
+            for (int c = 0; c < width; c++) {
+                if ((heights[c] & 1) != 0) {
+                    oddColumn = c;
+                    break;
+                }
             }
         }
-        if (oddColumns > 1) return infinity;
         long opponent = mask ^ cur;
         long empty = boardMask & ~mask;
         long claimed; // empty cells the opponent (B) can guarantee
