@@ -71,8 +71,11 @@ One window: rules bar on top (presets, W/H/K, placement, diagonals,
 misère), the board in the centre (click a column/cell; hover shows the
 landing disc), and an analysis panel on the right — published-theory
 status of the current position, player modes (Human/AI in any
-combination), solver mode/depth/time/node budgets, and an analysis view
+combination), solver mode/depth/time controls, and an analysis view
 whose badge states plainly whether the answer is *proven* or *heuristic*.
+If a generated opening book for the current rules exists in `books/`
+(see `bookgen`), the GUI loads it automatically — covered positions
+then play perfectly at book speed.
 All searching happens off the UI thread with a working Cancel button.
 
 ![Board rendering](board-screenshot.png)
@@ -138,6 +141,11 @@ well leaves a pure engine library (`./build.sh core`).
   generated opening books (`bookgen` produces them offline for any
   fast-path rules, resumable; `--book` uses them) — e.g. a depth-8
   6x4 book cuts that empty-board proof from 338,533 nodes to 2,250.
+  The search also carries a generic claim-even knowledge bound
+  (Victor Allis's pairing strategy, fuzz-validated); a ready-made library
+  of 2.04M proven positions for variant boards lives in `books/`
+  (inventory in `books/README.md`), including the engine-proven
+  empty-board draw for 6x4 without diagonals.
   The empty
   standard board is answered from published theory rather than
   recomputed from scratch. See [docs/PERFORMANCE.md](docs/PERFORMANCE.md)

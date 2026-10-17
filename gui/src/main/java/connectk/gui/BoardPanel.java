@@ -12,6 +12,7 @@ import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Font;
+import java.awt.GradientPaint;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
@@ -31,12 +32,16 @@ public final class BoardPanel extends JPanel {
 
     private static final Color BACKGROUND = new Color(27, 32, 40);
     private static final Color BOARD = new Color(33, 84, 158);
+    private static final Color BOARD_TOP = new Color(62, 124, 204);
     private static final Color BOARD_EDGE = new Color(22, 58, 112);
     private static final Color HOLE = new Color(16, 42, 78);
+    private static final Color HOLE_SHADOW = new Color(8, 22, 44);
     private static final Color P1 = new Color(224, 62, 58);
-    private static final Color P1_LIGHT = new Color(245, 120, 112);
+    private static final Color P1_LIGHT = new Color(248, 150, 140);
+    private static final Color P1_DARK = new Color(150, 32, 28);
     private static final Color P2 = new Color(242, 198, 54);
-    private static final Color P2_LIGHT = new Color(255, 226, 120);
+    private static final Color P2_LIGHT = new Color(255, 232, 150);
+    private static final Color P2_DARK = new Color(170, 128, 20);
     private static final Color LABELS = new Color(170, 182, 200);
 
     private Position position;
@@ -166,11 +171,24 @@ public final class BoardPanel extends JPanel {
             int boardW = cell * r.width();
             int boardH = cell * r.height();
 
-            // Board body
+            // Soft shadow, stand legs, then the board body (vertical gradient).
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.35f));
+            g.setColor(Color.BLACK);
+            g.fillRoundRect(ox - 8, oy - 4, boardW + 24, boardH + 24, 22, 22);
+            g.setComposite(AlphaComposite.SrcOver);
+            g.setColor(BOARD_EDGE);
+            int legTop = oy + boardH + 6;
+            int legBottom = oy + boardH + 24;
+            int legW = Math.max(14, cell / 2);
+            g.fillPolygon(new int[]{ox + 2, ox + 2 + legW, ox + 2 + legW + 6, ox - 4},
+                    new int[]{legTop, legTop, legBottom, legBottom}, 4);
+            g.fillPolygon(new int[]{ox + boardW - 2 - legW, ox + boardW - 2, ox + boardW + 4, ox + boardW - 2 - legW - 6},
+                    new int[]{legTop, legTop, legBottom, legBottom}, 4);
             g.setColor(BOARD_EDGE);
             g.fillRoundRect(ox - 12, oy - 12, boardW + 24, boardH + 24, 22, 22);
-            g.setColor(BOARD);
+            g.setPaint(new GradientPaint(ox, oy - 8, BOARD_TOP, ox, oy + boardH + 8, BOARD));
             g.fillRoundRect(ox - 8, oy - 8, boardW + 16, boardH + 16, 18, 18);
+            g.setPaint(null);
 
             // Hover column highlight (gravity)
             Move hover = inputEnabled ? hoverMove() : null;
@@ -190,9 +208,13 @@ public final class BoardPanel extends JPanel {
                     int x = ox + c * cell;
                     int y = oy + displayRow * cell;
                     int pad = Math.max(2, cell / 10);
-                    // hole
+                    // hole with a subtle inner shadow crescent at the top
                     g.setColor(HOLE);
                     g.fillOval(x + pad, y + pad, cell - 2 * pad, cell - 2 * pad);
+                    g.setColor(HOLE_SHADOW);
+                    g.setStroke(new BasicStroke(Math.max(1.5f, cell / 22f)));
+                    g.drawArc(x + pad + 1, y + pad + 1, cell - 2 * pad - 2, cell - 2 * pad - 2, 25, 130);
+                    g.setStroke(new BasicStroke(1f));
 
                     Player owner = position.ownerAt(c, row).orElse(null);
                     if (owner != null) {
@@ -229,7 +251,7 @@ public final class BoardPanel extends JPanel {
             for (int c = 0; c < r.width(); c++) {
                 String s = Integer.toString(c + 1);
                 int sw = g.getFontMetrics().stringWidth(s);
-                g.drawString(s, ox + c * cell + (cell - sw) / 2, oy + boardH + 28);
+                g.drawString(s, ox + c * cell + (cell - sw) / 2, oy + boardH + 42);
             }
             for (int row = 0; row < r.height(); row++) {
                 int displayRow = r.height() - 1 - row;
@@ -253,12 +275,27 @@ public final class BoardPanel extends JPanel {
     private void drawDisc(Graphics2D g, int x, int y, int cell, Player owner, float alpha) {
         int pad = Math.max(2, cell / 9);
         int d = cell - 2 * pad;
+        Color base = owner == Player.ONE ? P1 : P2;
+        Color light = owner == Player.ONE ? P1_LIGHT : P2_LIGHT;
+        Color dark = owner == Player.ONE ? P1_DARK : P2_DARK;
         g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
-        g.setColor(owner == Player.ONE ? P1 : P2);
+        // Rim (darker edge), then the face shifted up-left: cheap 3D shading.
+        g.setColor(dark);
         g.fillOval(x + pad, y + pad, d, d);
-        g.setColor(owner == Player.ONE ? P1_LIGHT : P2_LIGHT);
-        int hd = Math.max(2, d / 3);
-        g.fillOval(x + pad + d / 6, y + pad + d / 8, hd, Math.max(2, hd * 2 / 3));
+        int rim = Math.max(1, d / 14);
+        g.setPaint(new GradientPaint(x + pad, y + pad, light, x + pad + d, y + pad + d, base));
+        g.fillOval(x + pad, y + pad, d - rim, d - rim);
+        g.setPaint(null);
+        // Classic inner ring.
+        g.setColor(dark);
+        g.setStroke(new BasicStroke(Math.max(1f, d / 16f)));
+        int ringPad = Math.max(2, d / 4);
+        g.drawOval(x + pad + ringPad, y + pad + ringPad, d - rim - 2 * ringPad, d - rim - 2 * ringPad);
+        g.setStroke(new BasicStroke(1f));
+        // Specular highlight.
+        g.setColor(new Color(255, 255, 255, 170));
+        int hd = Math.max(2, d / 4);
+        g.fillOval(x + pad + d / 5, y + pad + d / 9, hd, Math.max(2, hd * 2 / 3));
         g.setComposite(AlphaComposite.SrcOver);
     }
 }

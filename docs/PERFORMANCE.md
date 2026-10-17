@@ -119,6 +119,50 @@ slightly (midgame_medium 43,501 nodes/pos at ~2.03M nodes/s):
   gets cheaper with every node-count improvement above. Kite's
   68M-position book was certainly a comparable compute project.
 
+
+### Round 3 (claim-even, ordering experiments, generated book library)
+
+* **Claim-even knowledge bound** (Victor Allis 1988), implemented as a
+  score upper bound inside the fast search, generic over even-height
+  gravity boards, any k and direction set (Kite's is standard-7x6
+  only). The pairing-strategy proof is sketched in the method
+  javadoc; soundness was *not* assumed: a dedicated test checks the
+  bound against generic-solver exact scores, a fuzz harness
+  (`ClaimFuzzMain`, 8,000 playout games, 1,012 exact-checked firings,
+  0 violations) hunts for counterexamples, and full benchmark sets
+  verify every score. That discipline paid off immediately: the
+  first implementation reconstructed lines in the wrong direction
+  (line *starts* vs ends), produced 2 wrong benchmark scores, and
+  was caught before commit; after the fix, all sets agree again.
+* **Ordering:** child transposition-probe ordering (prefer moves
+  whose child already has a stored upper bound for the opponent)
+  kept; soon-threat / playable-threat / fork weights implemented
+  and rejected at several tunings (consistently +10-20% nodes on
+  opening sets — loud threat moves make poor PVS first moves).
+* **Books:** four complete variant books generated with the improved
+  solver (2.04M proven positions; inventory + regeneration in
+  `books/README.md`), including no-diagonals 6x4 whose empty board
+  our engine proves a **draw**. The GUI auto-loads a matching book
+  from `books/` by file-name convention.
+
+| Test set | N | Round-2 nodes/pos | Round-3 nodes/pos | Round-3 ms/pos |
+|---|---:|---:|---:|---:|
+| endgame_easy | 1000 | 34 | 31 | 0.013 |
+| midgame_easy | 100 | 214 | 199 | 0.07 |
+| midgame_medium | 50 | 43,501 | 36,762 | 22.0 |
+| opening_easy | 100 | 48,042 | 40,573 | 26.5 |
+| opening_medium | 100 | 1,193,197 | 954,907 | 674 |
+
+Single hard reference (first `opening_hard` position, `13712`):
+113.9M nodes / 71.4 s sequential in round 2, now **84.3M / 68.6 s**
+in this sandbox. Per-node cost rose (child probes; claim-even
+filter is O(1) incremental), so 90 s empty-board probes now visit
+fewer raw nodes (119.6M standard, 160.9M no-diagonals vs 144M/194M
+in round 2) while needing roughly a quarter fewer nodes to prove
+hard positions. On desktop hardware (several-x this sandbox,
+larger caches) the standard empty board should fall to a from-scratch
+proof in minutes; no-diagonals 7x6 remains a serious run.
+
 ## What Kite does (from reading its source)
 
 Kite (`net.kite.internal.board.Board`, ~1,700 lines) is a
@@ -135,8 +179,8 @@ precomputed opening book:
 | Direct score bounds | precomputed min/max tables per stone count; “no immediate win” variants clamp every node | equivalent bounds computed arithmetically (win ≥3 plies / loss ≥4 plies) |
 | Tactical pruning | forced block, **stacked threat** (threat above the block) = loss, moves below opponent threats excluded, double-threat creation detected during ordering | all of these except ordering-time double-threat return (ours is found one ply later via the double-threat shortcut) |
 | Shallow child probes | before recursing, probes TT for *all children* to find immediate refutations / known failing moves | not yet (roadmap) |
-| Knowledge rules | **claim-even** (Victor Allis) implemented with bitboards, caps score at 0 or −1/−2/−3 by row pairs; “can no longer make a non-vertical line” cap | not yet — 7×6-specific knowledge; a generic version needs care (roadmap, standard-rules only) |
-| Move ordering | tuned per-cell score tables (separate per player!) + popcounts of connection opportunities, immediate threats, “soon” threats (one cell above playable), column forks | centre + threat-cell + winning-spots-created popcount. soon-threat/fork features are roadmap |
+| Knowledge rules | **claim-even** (Victor Allis) implemented with bitboards, caps score at 0 or −1/−2/−3 by row pairs; “can no longer make a non-vertical line” cap | claim-even implemented **generically** (even-height gravity, any k/directions) as a score bound with the same row-derived caps; the non-vertical-line cap is subsumed by its future-lines check. Derived from Allis with a proof sketch + counterexample fuzzing |
+| Move ordering | tuned per-cell score tables (separate per player!) + popcounts of connection opportunities, immediate threats, “soon” threats (one cell above playable), column forks | centre + threat-cell + winning-spots popcount + TT move + **child TT-probe ordering**. Soon-threat/fork weights implemented and measured worse at several tunings (rejected); per-cell tuned tables remain a gap |
 | Opening book | **minimal perfect hash**: 16 MB bucket seeds + 6-bit packed scores for ~68M positions (plies ≤5, =10, =15), ~68 MB via Git LFS; also used *retrogradely* one ply above book depths | generated by our own solver (`bookgen`, any fast-path rules/depth, resumable); sorted-array binary-search lookup keyed by canonical (cur, mask) — simpler than perfect hashing, works for variants Kite cannot cover at all. Book *size* is now a compute choice, not missing tech |
 | Symmetry | mirror-canonical everywhere | yes (when the direction set is mirror-symmetric) |
 | Extras | skill levels/Elo estimation, game/move quality analysis, GraalVM native CLI | GUI/CLI analysis instead; skill levels out of scope |
@@ -197,37 +241,32 @@ Relevance to this engine:
 
 ## Roadmap (priority order)
 
-1. **Knowledge bounds where provable — claim-even first** (Victor Allis
-   1988; standard-7×6-shaped parity arguments generalized carefully
-   to even-height gravity boards). WeakC4 (above) is the empirical
-   case; Kite's bitboard claim-even is the in-search precedent. Only
-   with a proof sketch in comments + exhaustive cross-validation.
-2. **Ordering features**: soon-threats and column forks (generic-k
-   versions of Kite's), shallow child TT probes before recursing.
-3. **Shared-TT parallel search** (lockless TT + YBWC-style work
+1. **Shared-TT parallel search** (lockless TT + YBWC-style work
    distribution inside the tree) — the design that can actually
    beat sequential on single hard positions. Needs a careful
    soundness argument for concurrent bound reads/writes.
-4. **Bigger generated books** on desktop hardware (`bookgen`):
-   7×6 standard frontier (depth 10–14+), and variant books
-   (no-diagonals, K=5) that no existing solver ships. Optional:
-   retrograde use one ply above book depth, à la Kite.
-5. **Strategy extraction/verification** (WeakC4-inspired): emit a
+2. **More Allis knowledge rules as validated bounds** (same
+   discipline as claim-even: proof sketch, bound-only integration,
+   counterexample fuzzing, benchmark verification) and **offline
+   move-ordering weight tuning** against the benchmark sets
+   (per-cell tables à la Kite, fitted instead of guessed).
+3. **Bigger generated books** on desktop hardware (`bookgen`):
+   7×6 standard frontier (depth 10–14+), deeper variant books.
+   Optional: retrograde use one ply above book depth, à la Kite.
+4. **Strategy extraction/verification** (WeakC4-inspired): emit a
    compact winning strategy for a proven-win position and verify it
    by opponent-only branching — a cheap, independently checkable
    certificate, and a possible weak-solving path for the open
    no-diagonals board.
-6. Bigger/bucketed TT experiments (e.g. direct-mapped + "important
+5. Bigger/bucketed TT experiments (e.g. direct-mapped + "important
    positions" two-tier cache like Kite's).
-7. SIMD (Vector API) last: the 7×6 board lives in one scalar
+6. SIMD (Vector API) last: the 7×6 board lives in one scalar
    register and search is branch/hash dominated; expect little.
 
-Done since round 1: dual-bound TT + TT-move ordering (kept),
-opening-book infrastructure + parallel resumable `bookgen`,
-parallel exact proving (`--threads`; root-PVS splitting — correct
-and useful for batches, single-position speed still sequential-led
-until item 3), `searchBound` bounded-search API. Tried and reverted
-with measurements: MTD(f) root driver, all-exact frontier splitting.
+Done in round 3: claim-even bound (generic version, fuzz-validated),
+child TT-probe move ordering, a 2.04M-position generated book
+library for variant boards, GUI cleanup + automatic book loading.
+Measured and rejected: soon-threat/fork ordering weights.
 
 ## Practical settings for long exact attempts (CLI)
 

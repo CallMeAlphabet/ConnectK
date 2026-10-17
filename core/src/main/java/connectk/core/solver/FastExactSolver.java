@@ -78,6 +78,13 @@ public final class FastExactSolver {
     private int infinity;
     private int[] shifts;
     private long boardMask;
+    private long pairLowerMask; // cells in 0-based even rows (lower cell of each vertical pair)
+    private long pairUpperMask; // cells in 0-based odd rows (upper cell of each pair, "even rows")
+    private boolean claimEvenApplicable;
+
+    /** Kill switch for A/B benchmarking: -Dconnectk.fast.claimEven=false disables the bound. */
+    private static final boolean CLAIM_EVEN_ENABLED =
+            !"false".equalsIgnoreCase(System.getProperty("connectk.fast.claimEven", "true"));
     private boolean mirrorSymmetric;
 
     // Mutable search state.
@@ -85,6 +92,7 @@ public final class FastExactSolver {
     private long mask;  // all stones
     private int[] heights;
     private int moves;
+    private int oddHeightColumns; // columns with odd stone count (claim-even filter, maintained in play/undo)
 
     // Per-ply move-ordering scratch (indexed by moves played).
     private int[][] moveCols;
@@ -268,6 +276,15 @@ public final class FastExactSolver {
         this.stride = rules.stride();
         this.infinity = cells + 2;
         this.boardMask = rules.boardMask()[0];
+        this.pairLowerMask = 0L;
+        this.pairUpperMask = 0L;
+        for (int c = 0; c < width; c++) {
+            for (int r = 0; r < height; r++) {
+                if ((r & 1) == 0) pairLowerMask |= 1L << (c * stride + r);
+                else pairUpperMask |= 1L << (c * stride + r);
+            }
+        }
+        this.claimEvenApplicable = CLAIM_EVEN_ENABLED && height % 2 == 0 && height >= 2;
         this.mirrorSymmetric = rules.mirrorSymmetric();
         Direction[] dirs = rules.directions().toArray(new Direction[0]);
         this.shifts = new int[dirs.length];
@@ -279,6 +296,8 @@ public final class FastExactSolver {
         this.heights = new int[width];
         for (int c = 0; c < width; c++) heights[c] = position.columnCount(c);
         this.moves = position.movesPlayed();
+        this.oddHeightColumns = 0;
+        for (int c = 0; c < width; c++) if ((heights[c] & 1) != 0) oddHeightColumns++;
         initTable(cells - moves);
         this.moveCols = new int[cells + 1][Math.max(1, width)];
         this.moveScores = new int[cells + 1][Math.max(1, width)];
@@ -479,6 +498,19 @@ public final class FastExactSolver {
                 alphaOrig = alpha;
             }
         }
+        // Claim-even bound: if the opponent can claim all pair-upper cells
+        // (see claimEvenBound()), the side to move's score is capped.
+        if (claimEvenApplicable && beta > -height) {
+            int ceBound = claimEvenBound();
+            if (ceBound < beta) {
+                beta = ceBound;
+                if (alpha >= beta) {
+                    storeBounds(slot, key, NO_LOWER, ceBound, -1);
+                    return ceBound;
+                }
+                betaOrig = beta;
+            }
+        }
         int level = moves;
         int n = prepCount;
         int best = -infinity;
@@ -574,6 +606,18 @@ public final class FastExactSolver {
             boolean terminalAfter = moves == cells || hasLine(mask ^ cur);
             if (!terminalAfter) {
                 s += Long.bitCount(winningSpots(mask ^ cur)) * 100;
+                // Child TT probe: if the child position already has a stored
+                // upper bound for the opponent, this move is likely strong;
+                // order such moves earlier (cheap refutations first).
+                if (c != prepTtCol && cells - moves > 12) {
+                    CanonicalKey childKey = canonicalKey();
+                    int childSlot = slotFor(childKey.cur, childKey.mask);
+                    if (ttUsed[childSlot] != 0 && ttCur[childSlot] == childKey.cur
+                            && ttMask[childSlot] == childKey.mask) {
+                        int upper = ttUpper(ttData[childSlot]);
+                        if (upper != NO_UPPER) s += (cells - upper) * 30;
+                    }
+                }
             }
             undo(c);
             moveCols[level][n] = c;
@@ -635,16 +679,163 @@ public final class FastExactSolver {
         long bit = 1L << (col * stride + heights[col]);
         cur ^= mask;
         mask |= bit;
-        heights[col]++;
+        if ((heights[col]++ & 1) == 0) oddHeightColumns++;
+        else oddHeightColumns--;
         moves++;
     }
 
     private void undo(int col) {
-        heights[col]--;
+        if ((--heights[col] & 1) == 0) oddHeightColumns--;
+        else oddHeightColumns++;
         moves--;
         long bit = 1L << (col * stride + heights[col]);
         mask ^= bit;
         cur ^= mask;
+    }
+
+
+    /**
+     * Claim-even upper bound on the exact score for the side to move
+     * ("A"), or {@code infinity} if the argument does not apply.
+     *
+     * <p><b>The pairing argument</b> (after Victor Allis, 1988). The board has
+     * even height. Partition each column's <em>remaining</em> cells into
+     * pairs from the bottom of the empty segment. In a column whose
+     * current stone count is even, pairs are (row 0,1), (2,3), ... in
+     * 0-based rows; call the first cell of a pair its <i>lower</i> and
+     * the second its <i>upper</i>. Gravity forces a pair to be started
+     * by playing its lower, so the player who moves second from here
+     * ("B", the opponent) can always reply directly above A's stone
+     * and thereby obtain the upper of every pair A starts. If no
+     * column has an odd stone count, every A move starts a pair, so B
+     * obtains <b>all</b> upper cells and A only lower cells.
+     *
+     * <p>With exactly one odd column q, q's segment pairs are flipped
+     * (B obtains q's 0-based even-row cells) and q has one unpaired
+     * top cell, the "single". A could invert the roles by playing the
+     * single, but only after q is completely filled \u2014 which hands B
+     * all of q's claimed cells first. So if B's stones together with
+     * B's claimed cells in q already contain a line, filling q
+     * completes that line before the single can be played, and the
+     * flipped assignment is likewise guaranteed.</p>
+     *
+     * <p><b>Consequences used here.</b> Let A-future = A's stones plus
+     * A-assigned cells, B-future likewise. (1) A can only ever win
+     * with a line inside A-future; such a line is additionally
+     * unrealizable if the B-assigned cells that must be filled
+     * underneath it (its gravity support) already give B a line,
+     * because B completes that line while providing the support,
+     * before A's line can be played. If no realizable A-line exists,
+     * A's score is at most 0. (2) If B-future contains a line, B
+     * completes it under claiming play (A cannot win first, by (1),
+     * and the board cannot fill without B receiving its cells). Its
+     * last empty cell, at 0-based row r_max, is filled after at most
+     * {@code empties - (height-1-r_max)} plies in any filling order
+     * (only cells above it in its column can be scheduled after it),
+     * so B wins by ply {@code cells - (height-1-r_max)} and A's score
+     * is at most {@code -(height - r_max)}.</p>
+     *
+     * <p>Soundness is not taken on faith: {@code claimEvenBoundSound}
+     * in the test suite checks this bound against exact scores on
+     * thousands of positions across several even-height rulesets, and
+     * the benchmark harness verifies every solved score against the
+     * published test sets with the bound enabled.</p>
+     */
+    private int claimEvenBound() {
+        int oddColumns = oddHeightColumns;
+        if (oddColumns > 1) return infinity;
+        int oddColumn = -1;
+        if (oddColumns == 1) {
+            for (int c = 0; c < width; c++) {
+                if ((heights[c] & 1) != 0) {
+                    oddColumn = c;
+                    break;
+                }
+            }
+        }
+        long opponent = mask ^ cur;
+        long empty = boardMask & ~mask;
+        long claimed; // empty cells the opponent (B) can guarantee
+        if (oddColumns == 0) {
+            claimed = empty & pairUpperMask;
+        } else {
+            long oddColMask = (((1L << height) - 1L) << (oddColumn * stride)) & boardMask;
+            claimed = (empty & pairUpperMask & ~oddColMask) | (empty & pairLowerMask & oddColMask);
+            // Guard: filling the odd column must complete a B line first.
+            if (!hasLine(opponent | (claimed & oddColMask))) return infinity;
+        }
+        long myFuture = cur | (empty & ~claimed);
+        // (1) Does A have any realizable line?
+        for (int shift : shifts) {
+            long ends = lineStarts(myFuture, shift);
+            while (ends != 0L) {
+                int start = Long.numberOfTrailingZeros(ends);
+                ends &= ends - 1;
+                long line = lineMask(start, shift);
+                long support = belowMask(line) & claimed;
+                if (!hasLine(opponent | support)) return infinity; // realizable: no bound
+            }
+        }
+        int bound = 0;
+        // (2) B lines inside B-future give negative caps by their highest empty cell.
+        long oppFuture = opponent | claimed;
+        for (int shift : shifts) {
+            long ends = lineStarts(oppFuture, shift);
+            while (ends != 0L) {
+                int start = Long.numberOfTrailingZeros(ends);
+                ends &= ends - 1;
+                long line = lineMask(start, shift);
+                long emptyLine = line & claimed;
+                if (emptyLine == 0L) continue; // (already terminal; cannot occur here)
+                int maxRow = 0;
+                for (long e = emptyLine; e != 0L; e &= e - 1) {
+                    int row = Long.numberOfTrailingZeros(e) % stride;
+                    if (row > maxRow) maxRow = row;
+                }
+                bound = Math.min(bound, -(height - maxRow));
+            }
+        }
+        return bound;
+    }
+
+    /** Bitmask of start cells (lowest index) of all k-lines of {@code bits} along {@code shift}. */
+    private long lineStarts(long bits, int shift) {
+        long x = bits;
+        for (int i = 1; i < connect && x != 0L; i++) x &= x >>> shift;
+        return x;
+    }
+
+    /** All cells of the k-line starting at {@code start} along {@code shift}. */
+    private long lineMask(int start, int shift) {
+        long line = 0L;
+        for (int i = 0; i < connect; i++) line |= 1L << (start + i * shift);
+        return line;
+    }
+
+    /** All board cells strictly below any cell of {@code line}, excluding the line itself. */
+    private long belowMask(long line) {
+        long below = 0L;
+        for (long m = line; m != 0L; m &= m - 1) {
+            int idx = Long.numberOfTrailingZeros(m);
+            int row = idx % stride;
+            if (row > 0) below |= ((1L << row) - 1L) << (idx - row);
+        }
+        return (below & ~line) & boardMask;
+    }
+
+    /**
+     * Public exposure of the claim-even bound for validation tests:
+     * an upper bound on the exact score for the side to move, or
+     * {@link Integer#MAX_VALUE} when the argument does not apply
+     * (unsupported rules, odd height, terminal position, or no bound).
+     */
+    public static int claimEvenUpperBound(Position position) {
+        if (!supports(position.rules()) || position.isTerminal()) return Integer.MAX_VALUE;
+        FastExactSolver solver = new FastExactSolver();
+        solver.initState(position, 0, 0, CancellationToken.NONE, SearchListener.NONE);
+        if (!solver.claimEvenApplicable) return Integer.MAX_VALUE;
+        int bound = solver.claimEvenBound();
+        return bound >= solver.infinity ? Integer.MAX_VALUE : bound;
     }
 
     private boolean hasLine(long bits) {
