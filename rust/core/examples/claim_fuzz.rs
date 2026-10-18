@@ -15,14 +15,16 @@ struct JavaRandom {
 }
 impl JavaRandom {
     fn new(seed: i64) -> JavaRandom {
-        JavaRandom { seed: ((seed as u64) ^ 0x5DEE_CE66D) & ((1u64 << 48) - 1) }
+        JavaRandom {
+            seed: ((seed as u64) ^ 0x5DEE_CE66D) & ((1u64 << 48) - 1),
+        }
     }
     fn next(&mut self, bits: u32) -> i32 {
         self.seed = (self.seed.wrapping_mul(0x5DEE_CE66D).wrapping_add(0xB)) & ((1u64 << 48) - 1);
-        (self.seed >> (48 - bits)) as u64 as i32
+        (self.seed >> (48 - bits)) as i32
     }
     fn next_int(&mut self, bound: i32) -> i32 {
-        if bound & -bound == bound {
+        if bound.isolate_lowest_one() == bound {
             return ((bound as i64 * self.next(31) as i64) >> 31) as i32;
         }
         loop {
@@ -57,8 +59,7 @@ fn main() {
                         negative += 1;
                     }
                     if empties <= max_empties {
-                        let ex =
-                            ExactSolver::new().solve(&pos, SearchControl::new(0, 60_000));
+                        let ex = ExactSolver::new().solve(&pos, SearchControl::new(0, 60_000));
                         checked += 1;
                         if ex.certainty != Certainty::ProvenExact {
                             println!("oracle UNKNOWN at empties={empties}");
@@ -75,7 +76,11 @@ fn main() {
                                     "col {} height {} ({})",
                                     c + 1,
                                     pos.column_count(c),
-                                    if pos.column_count(c) % 2 == 1 { "odd" } else { "even" }
+                                    if pos.column_count(c) % 2 == 1 {
+                                        "odd"
+                                    } else {
+                                        "even"
+                                    }
                                 );
                             }
                             return;
@@ -88,7 +93,7 @@ fn main() {
                 break;
             }
             let claimer_turn = (mode == 1 && pos.moves_played() % 2 == 1)
-                || (mode == 2 && pos.moves_played() % 2 == 0);
+                || (mode == 2 && pos.moves_played().is_multiple_of(2));
             let mut chosen = None;
             if claimer_turn && last_column >= 0 {
                 for m in &legal {

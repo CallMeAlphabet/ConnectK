@@ -22,7 +22,6 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 connectk-core = { path = "../../core" }
 
 # Thin LTO (not fat): the Tauri/GTK dependency tree is huge, and fat LTO

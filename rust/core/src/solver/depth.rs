@@ -113,10 +113,7 @@ impl DepthLimitedSolver {
             completed_best = root.1;
             completed_score = root.0;
             completed_depth = depth;
-            let snapshot = std::mem::replace(
-                &mut self.iteration_best,
-                fast_map_with_capacity(16),
-            );
+            let snapshot = std::mem::replace(&mut self.iteration_best, fast_map_with_capacity(16));
             completed_pv = reconstruct_variation(position, &snapshot, self.rules.cells());
             self.iteration_best = snapshot;
             self.control.report(self.nodes, depth, completed_best);
@@ -159,7 +156,7 @@ impl DepthLimitedSolver {
                 None
             };
         let explanation = format!(
-            "Iterative-deepening alpha-beta to depth {} plies with heuristic evaluation \
+            "Iterative-deepening principal-variation search to depth {} plies with heuristic evaluation \
              ({} potential lines).{} This is a playing strength estimate, not a \
              mathematical proof.",
             completed_depth,
@@ -206,7 +203,7 @@ impl DepthLimitedSolver {
         let mut best_move: Option<Move> = None;
         for mv in moves {
             self.pos.apply_resolved(mv);
-            let r = self.negamax(depth - 1, -INF, -alpha, 1);
+            let r = self.negamax(depth - 1, -INF, -alpha);
             self.pos.unapply_resolved(mv);
             let score = -r?;
             if score > best {
@@ -223,13 +220,7 @@ impl DepthLimitedSolver {
         Ok((best, best_move))
     }
 
-    fn negamax(
-        &mut self,
-        depth: i32,
-        mut alpha: i32,
-        mut beta: i32,
-        ply: i32,
-    ) -> Result<i32, Abort> {
+    fn negamax(&mut self, depth: i32, mut alpha: i32, mut beta: i32) -> Result<i32, Abort> {
         self.nodes += 1;
         self.control.check_depth(self.nodes)?;
         if self.pos.is_terminal() {
@@ -266,11 +257,11 @@ impl DepthLimitedSolver {
             // (see docs/PERFORMANCE.md); only node counts change.
             let r = (|| -> Result<i32, Abort> {
                 if i == 0 {
-                    self.negamax(depth - 1, -beta, -alpha, ply + 1)
+                    self.negamax(depth - 1, -beta, -alpha)
                 } else {
-                    let probe = -self.negamax(depth - 1, -alpha - 1, -alpha, ply + 1)?;
+                    let probe = -self.negamax(depth - 1, -alpha - 1, -alpha)?;
                     if probe > alpha && probe < beta {
-                        self.negamax(depth - 1, -beta, -alpha, ply + 1)
+                        self.negamax(depth - 1, -beta, -alpha)
                     } else {
                         Ok(-probe)
                     }
@@ -341,7 +332,11 @@ impl DepthLimitedSolver {
             }
             let completes = bits::test(&own_spots, idx);
             if completes {
-                s += if self.rules.misere { -9_000_000 } else { 9_000_000 };
+                s += if self.rules.misere {
+                    -9_000_000
+                } else {
+                    9_000_000
+                };
             }
             if !self.rules.misere && bits::test(&opp_spots, idx) {
                 s += 8_000_000;
@@ -353,7 +348,10 @@ impl DepthLimitedSolver {
             if !self.pos.is_terminal() {
                 s += self.pos.count_winning_spots(side) as i64 * 1_000;
                 if !self.rules.misere
-                    && !self.pos.line_completing_moves(self.pos.side_to_move()).is_empty()
+                    && !self
+                        .pos
+                        .line_completing_moves(self.pos.side_to_move())
+                        .is_empty()
                 {
                     s -= 500_000;
                 }
@@ -361,9 +359,13 @@ impl DepthLimitedSolver {
             self.pos.unapply_resolved(mv);
             scored.push((mv, s));
         }
-        scored.sort_by(|a, b| b.1.cmp(&a.1)); // stable
+        scored.sort_by_key(|a| std::cmp::Reverse(a.1)); // stable
         let cap = if self.rules.placement == Placement::Free {
-            if root { 36 } else { 28 }
+            if root {
+                36
+            } else {
+                28
+            }
         } else if w > 18 {
             16
         } else {
@@ -372,11 +374,7 @@ impl DepthLimitedSolver {
         if scored.len() > cap {
             self.candidate_restriction_used = true;
         }
-        scored
-            .into_iter()
-            .take(cap)
-            .map(|(m, _)| m)
-            .collect()
+        scored.into_iter().take(cap).map(|(m, _)| m).collect()
     }
 
     fn neighbourhood_candidates(&self, legal: Vec<Move>) -> Vec<Move> {

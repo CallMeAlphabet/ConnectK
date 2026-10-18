@@ -103,12 +103,7 @@ impl ParallelExactSolver {
                         let mut child = base.clone();
                         child.apply_resolved(mv);
                         // Move beats alpha0 iff childValue <= -alpha0-1.
-                        let b = solver.search_bound(
-                            &child,
-                            -alpha0 - 1,
-                            -alpha0,
-                            control.clone(),
-                        );
+                        let b = solver.search_bound(&child, -alpha0 - 1, -alpha0, control.clone());
                         out.push((idx, b.value, b.nodes, b.aborted));
                     }
                     out

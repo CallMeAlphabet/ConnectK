@@ -66,14 +66,14 @@ impl Position {
 
     /// Build from a diagram: one string per row, TOP row first; chars
     /// 'X' (player one), 'O' (player two), '.' empty.
-    pub fn from_board<S: AsRef<str>>(rules: &Rules, rows_top_first: &[S]) -> Result<Position, String> {
+    pub fn from_board<S: AsRef<str>>(
+        rules: &Rules,
+        rows_top_first: &[S],
+    ) -> Result<Position, String> {
         let w = rules.width;
         let h = rules.height;
         if rows_top_first.len() != h as usize {
-            return Err(format!(
-                "expected {h} rows, got {}",
-                rows_top_first.len()
-            ));
+            return Err(format!("expected {h} rows, got {}", rows_top_first.len()));
         }
         let mut one = vec![0u64; rules.word_count()];
         let mut two = vec![0u64; rules.word_count()];
@@ -154,7 +154,7 @@ impl Position {
         self.moves
     }
     pub fn side_to_move(&self) -> Player {
-        if self.moves % 2 == 0 {
+        if self.moves.is_multiple_of(2) {
             Player::One
         } else {
             Player::Two
@@ -269,7 +269,11 @@ impl Position {
     /// The winner, accounting for misère rules.
     pub fn winner(&self) -> Option<Player> {
         let maker = self.line_maker()?;
-        Some(if self.rules.misere { maker.other() } else { maker })
+        Some(if self.rules.misere {
+            maker.other()
+        } else {
+            maker
+        })
     }
 
     pub fn is_full(&self) -> bool {
@@ -341,7 +345,7 @@ impl Position {
     }
 
     pub fn write_winning_spots(&self, player: Player, spots: &mut [u64]) {
-        let k = self.rules.connect as i32;
+        let k = self.rules.connect;
         let n = self.rules.word_count();
         for w in spots.iter_mut() {
             *w = 0;
@@ -485,10 +489,7 @@ impl Position {
             }
             Placement::Free => {
                 if !m.is_resolved() {
-                    return Err(format!(
-                        "free placement needs a row: use {}:<row>",
-                        c + 1
-                    ));
+                    return Err(format!("free placement needs a row: use {}:<row>", c + 1));
                 }
                 if m.row < 0 || m.row >= self.rules.height {
                     return Err(format!(

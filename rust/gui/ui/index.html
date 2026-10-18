@@ -8,6 +8,7 @@
   :root {
     --bg: #1b2028; --panel: #232a35; --panel2: #2a3240; --text: #dbe4f0;
     --muted: #93a3b8; --accent: #3e7ccc; --border: #38445a;
+    color-scheme: dark;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
@@ -26,6 +27,19 @@
     background: var(--panel2); color: var(--text); border: 1px solid var(--border);
     border-radius: 4px; padding: 3px 5px;
   }
+  /* WebKitGTK may otherwise paint native dropdowns with a light theme,
+     leaving the light label nearly invisible on white. */
+  select {
+    appearance: none; -webkit-appearance: none;
+    background-color: var(--panel2);
+    background-image:
+      linear-gradient(45deg, transparent 50%, var(--text) 50%),
+      linear-gradient(135deg, var(--text) 50%, transparent 50%);
+    background-position: calc(100% - 14px) 55%, calc(100% - 9px) 55%;
+    background-size: 5px 5px; background-repeat: no-repeat;
+    padding-right: 24px;
+  }
+  select option { background-color: var(--panel2); color: var(--text); }
   input[type="number"] { width: 52px; }
   button {
     background: var(--panel2); color: var(--text); border: 1px solid var(--border);
@@ -191,7 +205,7 @@ function requestFromControls() {
 }
 
 async function call(cmd, args) {
-  if (!invoke) { showError("Tauri runtime not detected — run with: cargo tauri dev (from rust/gui/src-tauri)"); throw new Error("no tauri"); }
+  if (!invoke) { showError("Tauri runtime not detected — launch via ./run-gui.sh from the repository root"); throw new Error("no tauri"); }
   return invoke(cmd, args);
 }
 
@@ -251,8 +265,10 @@ function drawBoard() {
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = COLORS.bg; ctx.fillRect(0, 0, W, H);
   const pad = Math.min(W, H) * 0.03 + 4;
-  const labelH = 20 * (window.devicePixelRatio || 1);
-  const cell = Math.min((W - 2 * pad) / state.width, (H - 2 * pad - labelH) / state.height);
+  // Reserve a fraction of a cell below the board for the column labels;
+  // their font scales with the cell, so a fixed pixel reserve clips them.
+  const cell = Math.min((W - 2 * pad) / state.width, (H - 2 * pad) / (state.height + 0.65));
+  const labelH = cell * 0.65;
   if (cell <= 4) return;
   const bw = cell * state.width, bh = cell * state.height;
   const x0 = (W - bw) / 2, y0 = pad + (H - 2 * pad - labelH - bh) / 2;
@@ -427,6 +443,8 @@ async function runAnalysis(ai) {
   if (searching || !state) return;
   if (state.terminal && ai) return;
   showError("");
+  const beforePlies = state.moves.length;
+  let resumeAi = false;
   setSearching(true);
   $("status").textContent = "Searching… (" + $("mode").value + ")";
   try {
@@ -434,13 +452,17 @@ async function runAnalysis(ai) {
     displayResult(res);
     state = await call("get_state");
     render();
+    resumeAi = !ai || state.moves.length > beforePlies;
     if (ai && !res.best_move) {
       $("status").textContent = `AI has no move to play (${res.certainty}). In Exact mode, raise the budget or switch to Auto.`;
     }
   } catch (err) {
     if (String(err).includes("cancelled")) { $("status").textContent = "Search cancelled"; }
     else showError(err);
-  } finally { setSearching(false); }
+  } finally {
+    setSearching(false);
+    if (resumeAi) maybeScheduleAi();
+  }
 }
 $("hint").addEventListener("click", () => runAnalysis(false));
 $("aiMove").addEventListener("click", () => runAnalysis(true));

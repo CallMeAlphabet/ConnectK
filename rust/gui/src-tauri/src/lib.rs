@@ -101,10 +101,9 @@ fn parse_book_name(name: &str) -> Option<(Rules, i32)> {
     let stem = name.strip_suffix(".book")?;
     let (diag, rest) = if let Some(r) = stem.strip_prefix("std") {
         (true, r)
-    } else if let Some(r) = stem.strip_prefix("nodiag") {
-        (false, r)
     } else {
-        return None;
+        let r = stem.strip_prefix("nodiag")?;
+        (false, r)
     };
     let (w_str, rest) = take_digits(rest)?;
     let rest = rest.strip_prefix('x')?;
@@ -163,7 +162,11 @@ impl RulesDto {
             self.height,
             self.connect,
             placement,
-            if self.diagonals { dirs::ALL } else { dirs::ORTHOGONAL },
+            if self.diagonals {
+                dirs::ALL
+            } else {
+                dirs::ORTHOGONAL
+            },
             self.misere,
         )
     }
@@ -280,7 +283,13 @@ fn state_dto(inner: &Inner) -> GameStateDto {
         } else {
             " wins".to_string()
         };
-        format!("{} ({}){} on ply {}", w, w.symbol(), how, pos.moves_played())
+        format!(
+            "{} ({}){} on ply {}",
+            w,
+            w.symbol(),
+            how,
+            pos.moves_played()
+        )
     } else if pos.is_draw() {
         format!("Draw — board full on ply {}", pos.moves_played())
     } else {
@@ -310,7 +319,11 @@ fn state_dto(inner: &Inner) -> GameStateDto {
         draw: pos.is_draw(),
         terminal: pos.is_terminal(),
         last_move: pos.last_move().map(move_dto),
-        line_cells: pos.completed_line_cells().into_iter().map(move_dto).collect(),
+        line_cells: pos
+            .completed_line_cells()
+            .into_iter()
+            .map(move_dto)
+            .collect(),
         suggested: inner.suggested.map(move_dto),
         theory: theory::lookup(pos).map(|t| TheoryDto {
             outcome: t.outcome.to_string(),
@@ -346,11 +359,7 @@ fn new_game(state: State<'_, AppState>, rules: RulesDto) -> Result<GameStateDto,
 }
 
 #[tauri::command]
-fn play(
-    state: State<'_, AppState>,
-    column: i32,
-    row: Option<i32>,
-) -> Result<GameStateDto, String> {
+fn play(state: State<'_, AppState>, column: i32, row: Option<i32>) -> Result<GameStateDto, String> {
     let mut inner = state.inner.lock().unwrap();
     if inner.searching {
         return Err("search in progress".into());
@@ -437,22 +446,21 @@ async fn run_search(
 
     let app_for_progress = app.clone();
     let last_emit = Arc::new(Mutex::new(Instant::now()));
-    let listener: connectk_core::solver::ProgressFn =
-        Arc::new(move |nodes, depth, best| {
-            let mut last = last_emit.lock().unwrap();
-            if last.elapsed() < Duration::from_millis(50) && depth < 0 {
-                return;
-            }
-            *last = Instant::now();
-            let _ = app_for_progress.emit(
-                "search-progress",
-                ProgressDto {
-                    nodes,
-                    depth,
-                    best: best.map(move_dto),
-                },
-            );
-        });
+    let listener: connectk_core::solver::ProgressFn = Arc::new(move |nodes, depth, best| {
+        let mut last = last_emit.lock().unwrap();
+        if last.elapsed() < Duration::from_millis(50) && depth < 0 {
+            return;
+        }
+        *last = Instant::now();
+        let _ = app_for_progress.emit(
+            "search-progress",
+            ProgressDto {
+                nodes,
+                depth,
+                best: best.map(move_dto),
+            },
+        );
+    });
 
     let flag_for_task = cancel_flag.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {

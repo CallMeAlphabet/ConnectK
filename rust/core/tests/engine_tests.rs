@@ -29,15 +29,11 @@ impl JavaRandom {
         }
     }
     fn next(&mut self, bits: u32) -> i32 {
-        self.seed = (self
-            .seed
-            .wrapping_mul(0x5DEE_CE66D)
-            .wrapping_add(0xB))
-            & ((1u64 << 48) - 1);
-        (self.seed >> (48 - bits)) as u64 as i32
+        self.seed = (self.seed.wrapping_mul(0x5DEE_CE66D).wrapping_add(0xB)) & ((1u64 << 48) - 1);
+        (self.seed >> (48 - bits)) as i32
     }
     fn next_int(&mut self, bound: i32) -> i32 {
-        if bound & -bound == bound {
+        if bound.isolate_lowest_one() == bound {
             return ((bound as i64 * self.next(31) as i64) >> 31) as i32;
         }
         loop {
@@ -117,7 +113,10 @@ fn illegal_moves() {
     let mut f = Position::initial(&Rules::free(3, 3, 3, true).unwrap());
     f.play(Move::cell(1, 1)).unwrap();
     assert!(f.play(Move::cell(1, 1)).is_err(), "occupied cell rejected");
-    assert!(f.play(Move::column(1)).is_err(), "unresolved move rejected in free placement");
+    assert!(
+        f.play(Move::column(1)).is_err(),
+        "unresolved move rejected in free placement"
+    );
 }
 
 #[test]
@@ -129,14 +128,21 @@ fn win_directions() {
     assert_eq!(Some(Player::One), h.winner(), "horizontal win");
     let d = play_cols(&r, &[0, 1, 1, 2, 3, 2, 2, 3, 4, 3, 3]);
     assert_eq!(Some(Player::One), d.winner(), "diagonal win, board:\n{d}");
-    assert_eq!(4, d.completed_line_cells().len(), "winning line cells reported");
+    assert_eq!(
+        4,
+        d.completed_line_cells().len(),
+        "winning line cells reported"
+    );
 }
 
 #[test]
 fn diagonals_off() {
     let no_diag = Rules::new(4, 4, 4, Placement::Free, dirs::ORTHOGONAL, false).unwrap();
     let p = Position::from_board(&no_diag, &["XOO.", ".XO.", "..XO", "...X"]).unwrap();
-    assert!(!p.has_line(Player::One), "diagonal must not count without diagonals");
+    assert!(
+        !p.has_line(Player::One),
+        "diagonal must not count without diagonals"
+    );
     let diag = Rules::new(4, 4, 4, Placement::Free, dirs::ALL, false).unwrap();
     let mut q = Position::initial(&diag);
     q.play(Move::cell(0, 0)).unwrap();
@@ -146,7 +152,11 @@ fn diagonals_off() {
     q.play(Move::cell(2, 2)).unwrap();
     q.play(Move::cell(0, 3)).unwrap();
     q.play(Move::cell(3, 3)).unwrap();
-    assert_eq!(Some(Player::One), q.winner(), "same diagonal wins with diagonals on");
+    assert_eq!(
+        Some(Player::One),
+        q.winner(),
+        "same diagonal wins with diagonals on"
+    );
 }
 
 #[test]
@@ -183,7 +193,11 @@ fn misere_loses() {
     let r = Rules::standard_connect4().with_misere(true);
     let p = play_cols(&r, &[0, 4, 1, 5, 2, 6, 3]);
     assert_eq!(Some(Player::One), p.line_maker(), "X made the line");
-    assert_eq!(Some(Player::Two), p.winner(), "in misere the line maker loses");
+    assert_eq!(
+        Some(Player::Two),
+        p.winner(),
+        "in misere the line maker loses"
+    );
 }
 
 #[test]
@@ -191,12 +205,15 @@ fn from_board() {
     let r = Rules::standard_connect4();
     let p = Position::from_board(
         &r,
-        &[".......", ".......", ".......", ".......", ".......", "XXX.OOO"],
+        &[
+            ".......", ".......", ".......", ".......", ".......", "XXX.OOO",
+        ],
     )
     .unwrap();
     assert_eq!(Player::One, p.side_to_move(), "equal counts -> X to move");
     assert!(
-        p.line_completing_moves(Player::One).contains(&Move::cell(3, 0)),
+        p.line_completing_moves(Player::One)
+            .contains(&Move::cell(3, 0)),
         "X can complete at column 4"
     );
     assert!(
@@ -222,7 +239,11 @@ fn mirror_key() {
     let r = Rules::standard_connect4();
     let a = play_cols(&r, &[0, 1, 2, 2]);
     let b = play_cols(&r, &[6, 5, 4, 4]);
-    assert_eq!(a.canonical_key(), b.canonical_key(), "mirrored positions share canonical key");
+    assert_eq!(
+        a.canonical_key(),
+        b.canonical_key(),
+        "mirrored positions share canonical key"
+    );
     assert_ne!(a.raw_key(), b.raw_key(), "raw keys differ");
 }
 
@@ -264,7 +285,9 @@ fn line_completing_matches_simulation() {
 fn exact_win_in_one() {
     let p = Position::from_board(
         &Rules::standard_connect4(),
-        &[".......", ".......", ".......", ".......", ".......", "XXX.OOO"],
+        &[
+            ".......", ".......", ".......", ".......", ".......", "XXX.OOO",
+        ],
     )
     .unwrap();
     let res = exact(&p, 1_000_000, 10_000);
@@ -298,8 +321,16 @@ fn exact_double_threat() {
 fn exact_4x4_draw() {
     let p = Position::initial(&Rules::gravity(4, 4, 4, true).unwrap());
     let res = exact(&p, 20_000_000, 30_000);
-    assert_eq!(Certainty::ProvenExact, res.certainty, "4x4 proven, got: {res:?}");
-    assert_eq!(Some(Outcome::Draw), res.outcome, "4x4 is a draw (published table)");
+    assert_eq!(
+        Certainty::ProvenExact,
+        res.certainty,
+        "4x4 proven, got: {res:?}"
+    );
+    assert_eq!(
+        Some(Outcome::Draw),
+        res.outcome,
+        "4x4 is a draw (published table)"
+    );
 }
 
 #[test]
@@ -313,7 +344,11 @@ fn exact_tic_tac_toe() {
 fn exact_budget_unknown() {
     let p = Position::initial(&Rules::free(5, 5, 4, true).unwrap());
     let res = exact(&p, 100, 20_000);
-    assert_eq!(Certainty::UnknownLimitReached, res.certainty, "tiny budget -> unknown");
+    assert_eq!(
+        Certainty::UnknownLimitReached,
+        res.certainty,
+        "tiny budget -> unknown"
+    );
     assert!(res.best_move.is_none(), "no move claimed");
 }
 
@@ -323,7 +358,11 @@ fn brute(p: &mut Position, mut alpha: i32, beta: i32, cells: i32) -> i32 {
             None => 0,
             Some(w) => {
                 let mag = cells - p.moves_played() as i32 + 1;
-                if w == p.side_to_move() { mag } else { -mag }
+                if w == p.side_to_move() {
+                    mag
+                } else {
+                    -mag
+                }
             }
         };
     }
@@ -363,14 +402,21 @@ fn exact_vs_brute_force() {
             let expected = brute(&mut copy, -10_000, 10_000, r.cells());
             let res = exact(&p, 5_000_000, 20_000);
             assert_eq!(
-                Certainty::ProvenExact, res.certainty,
+                Certainty::ProvenExact,
+                res.certainty,
                 "exact must finish on small position\n{p}\nrules={r}"
             );
-            assert_eq!(expected, res.score, "score mismatch vs brute force\n{p}\nrules={r}");
+            assert_eq!(
+                expected, res.score,
+                "score mismatch vs brute force\n{p}\nrules={r}"
+            );
             compared += 1;
         }
     }
-    assert!(compared >= 50, "enough comparisons actually ran: {compared}");
+    assert!(
+        compared >= 50,
+        "enough comparisons actually ran: {compared}"
+    );
 }
 
 // ---- fast exact ----
@@ -378,11 +424,15 @@ fn exact_vs_brute_force() {
 #[test]
 fn fast_vs_generic() {
     assert!(FastExactSolver::supports(&Rules::standard_connect4()));
-    assert!(!FastExactSolver::supports(&Rules::standard_connect4().with_misere(true)));
+    assert!(!FastExactSolver::supports(
+        &Rules::standard_connect4().with_misere(true)
+    ));
     assert!(!FastExactSolver::supports(
         &Rules::new(4, 4, 3, Placement::Free, dirs::ALL, false).unwrap()
     ));
-    assert!(!FastExactSolver::supports(&Rules::gravity(10, 7, 4, true).unwrap()));
+    assert!(!FastExactSolver::supports(
+        &Rules::gravity(10, 7, 4, true).unwrap()
+    ));
 
     let variants = [
         Rules::standard_connect4(),
@@ -402,7 +452,10 @@ fn fast_vs_generic() {
     let mut rng = JavaRandom::new(99);
     let mut compared = 0;
     for r in &variants {
-        assert!(FastExactSolver::supports(r), "variant should be fast-supported: {r}");
+        assert!(
+            FastExactSolver::supports(r),
+            "variant should be fast-supported: {r}"
+        );
         for _ in 0..20 {
             let target = (r.cells() - 12).max(4);
             let p = random_position(r, &mut rng, target);
@@ -412,11 +465,18 @@ fn fast_vs_generic() {
             let generic = exact(&p, 20_000_000, 30_000);
             let fast = fast_exact(&p, 20_000_000, 30_000);
             assert_eq!(
-                Certainty::ProvenExact, fast.certainty,
+                Certainty::ProvenExact,
+                fast.certainty,
                 "fast exact must finish\n{p}\nrules={r}"
             );
-            assert_eq!(generic.score, fast.score, "fast/generic score mismatch\n{p}\nrules={r}");
-            assert_eq!(generic.outcome, fast.outcome, "fast/generic outcome mismatch\n{p}\nrules={r}");
+            assert_eq!(
+                generic.score, fast.score,
+                "fast/generic score mismatch\n{p}\nrules={r}"
+            );
+            assert_eq!(
+                generic.outcome, fast.outcome,
+                "fast/generic outcome mismatch\n{p}\nrules={r}"
+            );
             let mut cursor = p.clone();
             for m in &fast.principal_line {
                 cursor.play(*m).unwrap();
@@ -424,7 +484,10 @@ fn fast_vs_generic() {
             compared += 1;
         }
     }
-    assert!(compared >= 60, "enough fast/generic comparisons ran: {compared}");
+    assert!(
+        compared >= 60,
+        "enough fast/generic comparisons ran: {compared}"
+    );
 }
 
 #[test]
@@ -443,7 +506,11 @@ fn fast_known_results() {
         60_000,
     );
     assert_eq!(Certainty::ProvenExact, loss.certainty, "6x4 proven");
-    assert_eq!(Some(Outcome::Loss), loss.outcome, "6x4 is a second-player win");
+    assert_eq!(
+        Some(Outcome::Loss),
+        loss.outcome,
+        "6x4 is a second-player win"
+    );
 
     let seq = [3, 4, 3, 3, 0, 4, 0, 2, 2, 4, 4, 2, 1, 1, 1, 2];
     let std = fast_exact(&play_cols(&Rules::standard_connect4(), &seq), 0, 60_000);
@@ -454,7 +521,11 @@ fn fast_known_results() {
         0,
         60_000,
     );
-    assert_eq!(Some(Outcome::Draw), no_diag.outcome, "no-diagonals: proven draw");
+    assert_eq!(
+        Some(Outcome::Draw),
+        no_diag.outcome,
+        "no-diagonals: proven draw"
+    );
 }
 
 fn top_up_to_even_columns(pos: &mut Position, rng: &mut JavaRandom) {
@@ -473,7 +544,11 @@ fn top_up_to_even_columns(pos: &mut Position, rng: &mut JavaRandom) {
     }
 }
 
-fn check_claim_even_along_playouts(r: &Rules, rng: &mut JavaRandom, target_checked: i32) -> (i32, i32) {
+fn check_claim_even_along_playouts(
+    r: &Rules,
+    rng: &mut JavaRandom,
+    target_checked: i32,
+) -> (i32, i32) {
     let (mut fired, mut negative, mut checked) = (0, 0, 0);
     for game in 0..600 {
         if checked >= target_checked {
@@ -510,7 +585,7 @@ fn check_claim_even_along_playouts(r: &Rules, rng: &mut JavaRandom, target_check
                 break;
             }
             let claimer_turn = (mode == 1 && pos.moves_played() % 2 == 1)
-                || (mode == 2 && pos.moves_played() % 2 == 0);
+                || (mode == 2 && pos.moves_played().is_multiple_of(2));
             let mut chosen: Option<Move> = None;
             if claimer_turn && last_column >= 0 {
                 for m in &legal {
@@ -520,8 +595,7 @@ fn check_claim_even_along_playouts(r: &Rules, rng: &mut JavaRandom, target_check
                     }
                 }
             }
-            let chosen =
-                chosen.unwrap_or(legal[rng.next_int(legal.len() as i32) as usize]);
+            let chosen = chosen.unwrap_or(legal[rng.next_int(legal.len() as i32) as usize]);
             pos.play(chosen).unwrap();
             last_column = chosen.column;
         }
@@ -575,7 +649,8 @@ fn claim_even_bound_sound() {
             }
             let ex = exact(&pos, 20_000_000, 30_000);
             assert_eq!(
-                Certainty::ProvenExact, ex.certainty,
+                Certainty::ProvenExact,
+                ex.certainty,
                 "reference exact must finish\n{pos}\nrules={r}"
             );
             assert!(
@@ -608,7 +683,10 @@ fn claim_even_bound_sound() {
         }
     }
     assert!(fired >= 25, "bound exercised often enough: fired={fired}");
-    assert!(negative >= 3, "negative (claimer-win) caps exercised: {negative}");
+    assert!(
+        negative >= 3,
+        "negative (claimer-win) caps exercised: {negative}"
+    );
 }
 
 // ---- parallel ----
@@ -621,7 +699,11 @@ fn parallel_vs_sequential() {
         0,
         30_000,
     );
-    assert_eq!(Certainty::ProvenExact, draw.certainty, "parallel 5x4 proven");
+    assert_eq!(
+        Certainty::ProvenExact,
+        draw.certainty,
+        "parallel 5x4 proven"
+    );
     assert_eq!(Some(Outcome::Draw), draw.outcome, "parallel 5x4 draw");
     let loss = parallel_exact(
         &Position::initial(&Rules::gravity(6, 4, 4, true).unwrap()),
@@ -637,7 +719,11 @@ fn parallel_vs_sequential() {
         0,
         30_000,
     );
-    assert_eq!(Some(Outcome::Draw), ttt.outcome, "parallel tic-tac-toe draw");
+    assert_eq!(
+        Some(Outcome::Draw),
+        ttt.outcome,
+        "parallel tic-tac-toe draw"
+    );
 
     let variants = [
         Rules::standard_connect4(),
@@ -657,10 +743,14 @@ fn parallel_vs_sequential() {
             let seq = parallel_exact(&pos, 1, 20_000_000, 30_000);
             let par = parallel_exact(&pos, 2, 20_000_000, 30_000);
             assert_eq!(
-                Certainty::ProvenExact, par.certainty,
+                Certainty::ProvenExact,
+                par.certainty,
                 "parallel must finish\n{pos}\nrules={r}"
             );
-            assert_eq!(seq.score, par.score, "parallel/sequential score mismatch\n{pos}\nrules={r}");
+            assert_eq!(
+                seq.score, par.score,
+                "parallel/sequential score mismatch\n{pos}\nrules={r}"
+            );
             let mut cursor = pos.clone();
             for m in &par.principal_line {
                 cursor.play(*m).unwrap();
@@ -668,7 +758,10 @@ fn parallel_vs_sequential() {
             compared += 1;
         }
     }
-    assert!(compared >= 20, "enough parallel comparisons ran: {compared}");
+    assert!(
+        compared >= 20,
+        "enough parallel comparisons ran: {compared}"
+    );
 }
 
 #[test]
@@ -676,7 +769,8 @@ fn parallel_tiny_budget_unknown() {
     let p = play_cols(&Rules::standard_connect4(), &[3, 3]);
     let res = parallel_exact(&p, 2, 0, 1);
     assert_eq!(
-        Certainty::UnknownLimitReached, res.certainty,
+        Certainty::UnknownLimitReached,
+        res.certainty,
         "1 ms parallel budget -> unknown, got {res:?}"
     );
 }
@@ -701,11 +795,18 @@ fn opening_book_round_trip() {
     let mut expected: BTreeMap<(u64, u64), SearchResult> = BTreeMap::new();
     for (key, pos) in &reps {
         let res = fast_exact(pos, 0, 30_000);
-        assert_eq!(Certainty::ProvenExact, res.certainty, "bookgen position proven");
+        assert_eq!(
+            Certainty::ProvenExact,
+            res.certainty,
+            "bookgen position proven"
+        );
         let (cur, mask, flipped) = FastExactSolver::encode_canonical(pos);
         let col = res.best_move.unwrap().column;
         let canonical_col = if flipped { r.width - 1 - col } else { col };
-        text.push_str(&format!("{cur:016x} {mask:016x} {} {}\n", res.score, canonical_col));
+        text.push_str(&format!(
+            "{cur:016x} {mask:016x} {} {}\n",
+            res.score, canonical_col
+        ));
         expected.insert(*key, res);
     }
     let book = OpeningBook::parse(&text).unwrap();
@@ -720,7 +821,11 @@ fn opening_book_round_trip() {
         assert_eq!(Certainty::ProvenExact, res.certainty, "book hit proven");
         assert_eq!(exp.score, res.score, "book score matches search");
         assert!(res.move_is_proven_optimal, "book move certified optimal");
-        assert!(res.nodes <= 2, "book hit should not search, nodes={}", res.nodes);
+        assert!(
+            res.nodes <= 2,
+            "book hit should not search, nodes={}",
+            res.nodes
+        );
         let mut child = pos.clone();
         child.play(res.best_move.unwrap()).unwrap();
         if !child.is_terminal() {
@@ -731,7 +836,11 @@ fn opening_book_round_trip() {
     let mut with_book = FastExactSolver::new();
     with_book.set_opening_book(Some(book));
     let empty = with_book.solve(&Position::initial(&r), SearchControl::new(0, 30_000));
-    assert_eq!(Some(Outcome::Draw), empty.outcome, "5x4 still a draw with book attached");
+    assert_eq!(
+        Some(Outcome::Draw),
+        empty.outcome,
+        "5x4 still a draw with book attached"
+    );
 }
 
 // ---- depth-limited ----
@@ -740,11 +849,17 @@ fn opening_book_round_trip() {
 fn depth_takes_win() {
     let p = Position::from_board(
         &Rules::standard_connect4(),
-        &[".......", ".......", ".......", ".......", ".......", "XXX.OOO"],
+        &[
+            ".......", ".......", ".......", ".......", ".......", "XXX.OOO",
+        ],
     )
     .unwrap();
     let res = DepthLimitedSolver::new().solve(&p, 4, SearchControl::new(0, 10_000));
-    assert_eq!(3, res.best_move.unwrap().column, "depth search takes the win");
+    assert_eq!(
+        3,
+        res.best_move.unwrap().column,
+        "depth search takes the win"
+    );
 }
 
 #[test]
@@ -763,7 +878,11 @@ fn depth_blocks() {
 fn depth_labelled_heuristic() {
     let p = Position::initial(&Rules::standard_connect4());
     let res = ConnectKSolver::new().solve(&p, &SolveRequest::depth_limited(6, 10_000));
-    assert_eq!(Certainty::HeuristicDepthLimited, res.certainty, "labelled heuristic");
+    assert_eq!(
+        Certainty::HeuristicDepthLimited,
+        res.certainty,
+        "labelled heuristic"
+    );
     assert!(!res.move_is_proven_optimal, "move not claimed proven");
     assert!(res.best_move.is_some(), "a move is still recommended");
 }
@@ -772,8 +891,7 @@ fn depth_labelled_heuristic() {
 
 #[test]
 fn theory_standard() {
-    let t = connectk_core::theory::lookup(&Position::initial(&Rules::standard_connect4()))
-        .unwrap();
+    let t = connectk_core::theory::lookup(&Position::initial(&Rules::standard_connect4())).unwrap();
     assert_eq!(Outcome::Win, t.outcome, "first player wins 7x6");
     assert_eq!(Some(41), t.plies_to_end, "win on ply 41");
     assert_eq!(3, t.proven_best_move.unwrap().column, "centre opening");
@@ -790,17 +908,19 @@ fn theory_8x8() {
 fn theory_after_corner() {
     let p = play_cols(&Rules::standard_connect4(), &[0]);
     let t = connectk_core::theory::lookup(&p).unwrap();
-    assert_eq!(Outcome::Win, t.outcome, "after corner opening, player to move (P2) wins");
+    assert_eq!(
+        Outcome::Win,
+        t.outcome,
+        "after corner opening, player to move (P2) wins"
+    );
     assert_eq!(Some(39), t.plies_to_end, "game ends on ply 40");
 }
 
 #[test]
 fn theory_not_for_no_diagonals() {
     assert!(
-        connectk_core::theory::lookup(&Position::initial(
-            &Rules::gravity(7, 6, 4, false).unwrap()
-        ))
-        .is_none(),
+        connectk_core::theory::lookup(&Position::initial(&Rules::gravity(7, 6, 4, false).unwrap()))
+            .is_none(),
         "no theory claimed for no-diagonals variant"
     );
 }
@@ -822,7 +942,9 @@ fn facade_auto_theory() {
 fn facade_exact() {
     let p = Position::from_board(
         &Rules::standard_connect4(),
-        &[".......", ".......", ".......", ".......", ".......", "XXX.OOO"],
+        &[
+            ".......", ".......", ".......", ".......", ".......", "XXX.OOO",
+        ],
     )
     .unwrap();
     let res = ConnectKSolver::new().solve(&p, &SolveRequest::exact(10_000, 1_000_000));
@@ -839,12 +961,17 @@ fn evaluator_basics() {
     assert_eq!(0, ev.evaluate(&empty), "empty board evaluates to 0");
     let terminal = Position::from_board(
         &r,
-        &[".......", ".......", ".......", ".......", ".......", "XXXXOOO"],
+        &[
+            ".......", ".......", ".......", ".......", ".......", "XXXXOOO",
+        ],
     )
     .unwrap();
     let s = ev.evaluate(&terminal);
     assert!(s < 0, "side to move has lost");
-    assert!(connectk_core::eval::is_losing_score(s), "terminal magnitude");
+    assert!(
+        connectk_core::eval::is_losing_score(s),
+        "terminal magnitude"
+    );
 }
 
 // ---- Rust-specific consistency checks (not in the Java suite) ----
@@ -957,8 +1084,7 @@ fn canonical_single_matches_position_key() {
 #[test]
 fn existing_books_load_and_hit() {
     // The books generated by the Java implementation must load and agree.
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../books/std5x4-d12.book");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../books/std5x4-d12.book");
     if !path.exists() {
         return; // books are gitignored local artifacts
     }
@@ -970,5 +1096,9 @@ fn existing_books_load_and_hit() {
     solver.set_opening_book(Some(book));
     let res = solver.solve(&Position::initial(&r), SearchControl::new(0, 30_000));
     assert_eq!(Certainty::ProvenExact, res.certainty);
-    assert_eq!(Some(Outcome::Draw), res.outcome, "5x4 draw with Java-generated book");
+    assert_eq!(
+        Some(Outcome::Draw),
+        res.outcome,
+        "5x4 draw with Java-generated book"
+    );
 }

@@ -83,13 +83,12 @@ pub fn and_not_into(a: &[u64], b: &[u64], dest: &mut [u64]) {
 
 /// Logical shift towards lower indices: `dest = src >> shift`. Alias-safe.
 pub fn shift_right(src: &[u64], shift: u32, dest: &mut [u64]) {
-    let n = dest.len();
     let word_shift = (shift >> 6) as usize;
     let bit_shift = shift & 63;
     // Copy through a small stack buffer when src may alias dest is the
     // caller's problem in Rust (borrow checker forbids aliasing &mut),
     // so this is a straight loop.
-    for i in 0..n {
+    for (i, slot) in dest.iter_mut().enumerate() {
         let mut v = 0u64;
         let s = i + word_shift;
         if s < src.len() {
@@ -98,7 +97,7 @@ pub fn shift_right(src: &[u64], shift: u32, dest: &mut [u64]) {
                 v |= src[s + 1] << (64 - bit_shift);
             }
         }
-        dest[i] = v;
+        *slot = v;
     }
 }
 

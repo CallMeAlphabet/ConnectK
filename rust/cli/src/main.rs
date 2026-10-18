@@ -154,7 +154,11 @@ fn build_rules(o: &Opts) -> Result<Rules, String> {
             o.get("diagonals").map(|s| s.to_lowercase()).as_deref(),
             Some("false")
         );
-        if diag { dirs::ALL } else { dirs::ORTHOGONAL }
+        if diag {
+            dirs::ALL
+        } else {
+            dirs::ORTHOGONAL
+        }
     };
     Rules::new(w, h, k, placement, directions, o.contains_key("misere"))
 }
@@ -302,7 +306,10 @@ fn cmd_theory(o: &Opts) -> Result<(), String> {
     let p = build_position(&rules, o)?;
     match connectk_core::theory::lookup(&p) {
         Some(t) => {
-            println!("Published result for {rules} after {} plies:", p.moves_played());
+            println!(
+                "Published result for {rules} after {} plies:",
+                p.moves_played()
+            );
             println!("  outcome for side to move: {}", t.outcome);
             if let Some(pl) = t.plies_to_end {
                 println!("  game ends in {pl} plies under perfect play");
@@ -351,10 +358,11 @@ fn cmd_bookgen(o: &Opts) -> Result<(), String> {
 
     let mut done: KeySet = key_set_with_capacity(1 << 16);
     let exists = path.exists()
-        && std::fs::metadata(&path).map(|m| m.len() > 0).unwrap_or(false);
+        && std::fs::metadata(&path)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false);
     if exists {
-        let text = std::fs::read_to_string(&path)
-            .map_err(|e| format!("cannot read {out}: {e}"))?;
+        let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {out}: {e}"))?;
         for line in text.lines() {
             let line = line.trim();
             if let Some(rest) = line.strip_prefix('#') {
@@ -415,8 +423,7 @@ fn cmd_bookgen(o: &Opts) -> Result<(), String> {
         .map_err(|e| format!("cannot open {out}: {e}"))?;
     let mut writer = BufWriter::new(file);
     if !exists {
-        writeln!(writer, "# connectk-book v1 depth={depth}")
-            .map_err(|e| e.to_string())?;
+        writeln!(writer, "# connectk-book v1 depth={depth}").map_err(|e| e.to_string())?;
         writer.flush().map_err(|e| e.to_string())?;
     }
 
@@ -444,10 +451,7 @@ fn cmd_bookgen(o: &Opts) -> Result<(), String> {
                         rx.recv()
                     };
                     let Ok(pos) = pos else { break };
-                    let r = solver.solve(
-                        &pos,
-                        SearchControl::new(per_pos_nodes, per_pos_time),
-                    );
+                    let r = solver.solve(&pos, SearchControl::new(per_pos_nodes, per_pos_time));
                     total_nodes.fetch_add(r.nodes, Ordering::Relaxed);
                     if r.certainty != Certainty::ProvenExact {
                         unsolved.fetch_add(1, Ordering::Relaxed);
@@ -487,9 +491,9 @@ fn cmd_bookgen(o: &Opts) -> Result<(), String> {
             }
             received += 1;
             let n = received; // solved results received so far
-            let done_count = (solved.load(Ordering::Relaxed)
-                + unsolved.load(Ordering::Relaxed)) as usize;
-            if n % 200 == 0 || done_count == total {
+            let done_count =
+                (solved.load(Ordering::Relaxed) + unsolved.load(Ordering::Relaxed)) as usize;
+            if n.is_multiple_of(200) || done_count == total {
                 println!(
                     "  {}/{} done ({} solved, {} unsolved, {} nodes, {:.0} s elapsed)",
                     done_count.max(n),

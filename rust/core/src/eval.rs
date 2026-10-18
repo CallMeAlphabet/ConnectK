@@ -15,7 +15,7 @@
 //! depth-limited results are unchanged by the port.
 
 use crate::bits;
-use crate::model::{Placement, Player, Rules};
+use crate::model::{Placement, Rules};
 use crate::position::Position;
 
 pub const WIN_SCORE: i32 = 1_000_000;
@@ -59,8 +59,8 @@ impl Evaluator {
         let k = rules.connect;
         let mut weights = vec![0i32; (k + 1) as usize];
         let mut w = 1i32;
-        for i in 1..=k as usize {
-            weights[i] = w;
+        for slot in weights.iter_mut().skip(1) {
+            *slot = w;
             w *= 8;
         }
         let mut windows = Vec::new();
@@ -162,8 +162,7 @@ impl Evaluator {
             let value = self.weights[count as usize] as f64 * factor;
             score += if mine { value } else { -1.05 * value };
         }
-        score += 0.05
-            * (self.centrality1(own) - self.centrality1(opp)) as f64;
+        score += 0.05 * (self.centrality1(own) - self.centrality1(opp)) as f64;
         clamp_round(score)
     }
 
@@ -253,10 +252,4 @@ fn clamp_round(score: f64) -> i32 {
     // Java Math.round = floor(x + 0.5).
     let s = (score + 0.5).floor() as i32;
     s.clamp(-HEURISTIC_CLAMP, HEURISTIC_CLAMP)
-}
-
-// Player import is used in doc/API symmetry; suppress in dead code paths.
-#[allow(dead_code)]
-fn _side(p: &Position) -> Player {
-    p.side_to_move()
 }

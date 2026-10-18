@@ -17,7 +17,11 @@ use std::time::Instant;
 fn to_pons_score(score: i32) -> i32 {
     let a = score.abs();
     let v = (a + 1) / 2;
-    if score < 0 { -v } else { v }
+    if score < 0 {
+        -v
+    } else {
+        v
+    }
 }
 
 fn load(path: &str, max_positions: usize) -> Vec<(Position, i32)> {
@@ -38,7 +42,9 @@ fn load(path: &str, max_positions: usize) -> Vec<(Position, i32)> {
         if moves.is_empty() || !moves.chars().all(|c| ('1'..='7').contains(&c)) {
             continue;
         }
-        let Ok(expected) = score.parse::<i32>() else { continue };
+        let Ok(expected) = score.parse::<i32>() else {
+            continue;
+        };
         let mut pos = Position::initial(&rules);
         let mut ok = true;
         for ch in moves.chars() {
@@ -61,14 +67,23 @@ fn main() {
         std::process::exit(2);
     }
     let file = &args[1];
-    let max_positions: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(usize::MAX);
+    let max_positions: usize = args
+        .get(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(usize::MAX);
     let per_position_millis: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(10_000);
-    let fast = args.get(4).map(|s| s.eq_ignore_ascii_case("fast")).unwrap_or(false);
+    let fast = args
+        .get(4)
+        .map(|s| s.eq_ignore_ascii_case("fast"))
+        .unwrap_or(false);
 
     let cases = load(file, max_positions);
     println!(
         "Benchmark: {} ({} positions, {} ms/position budget, solver={})",
-        std::path::Path::new(file).file_name().unwrap().to_string_lossy(),
+        std::path::Path::new(file)
+            .file_name()
+            .unwrap()
+            .to_string_lossy(),
         cases.len(),
         per_position_millis,
         if fast { "fast" } else { "generic" }
@@ -112,7 +127,10 @@ fn main() {
         }
     }
     let wall_s = wall.elapsed().as_secs_f64();
-    println!("solved {solved}/{}, correct {correct}, timeouts {timeouts}", cases.len());
+    println!(
+        "solved {solved}/{}, correct {correct}, timeouts {timeouts}",
+        cases.len()
+    );
     println!("total nodes {total_nodes} | solver time {total_ms} ms | wall {wall_s:.2} s");
     if total_ms > 0 {
         println!(

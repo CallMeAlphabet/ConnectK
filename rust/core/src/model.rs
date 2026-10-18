@@ -249,13 +249,22 @@ impl Rules {
     pub fn standard_connect4() -> Rules {
         Rules::new(7, 6, 4, Placement::Gravity, dirs::ALL, false).unwrap()
     }
-    pub fn gravity(width: i32, height: i32, connect: i32, diagonals: bool) -> Result<Rules, String> {
+    pub fn gravity(
+        width: i32,
+        height: i32,
+        connect: i32,
+        diagonals: bool,
+    ) -> Result<Rules, String> {
         Rules::new(
             width,
             height,
             connect,
             Placement::Gravity,
-            if diagonals { dirs::ALL } else { dirs::ORTHOGONAL },
+            if diagonals {
+                dirs::ALL
+            } else {
+                dirs::ORTHOGONAL
+            },
             false,
         )
     }
@@ -265,7 +274,11 @@ impl Rules {
             height,
             connect,
             Placement::Free,
-            if diagonals { dirs::ALL } else { dirs::ORTHOGONAL },
+            if diagonals {
+                dirs::ALL
+            } else {
+                dirs::ORTHOGONAL
+            },
             false,
         )
     }
@@ -331,7 +344,11 @@ impl core::fmt::Display for Rules {
             self.width,
             self.height,
             self.placement,
-            if self.has_diagonals() { " diagonals" } else { " no-diagonals" },
+            if self.has_diagonals() {
+                " diagonals"
+            } else {
+                " no-diagonals"
+            },
             if self.misere { " misere" } else { "" }
         )
     }

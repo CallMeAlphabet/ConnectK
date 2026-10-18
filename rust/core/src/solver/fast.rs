@@ -551,7 +551,7 @@ impl FastExactSolver {
             self.store_exact(slot, key, s, c);
             return Ok(s);
         }
-        // Score-bound tightening (see Java docs): no immediate win
+        // Score-bound tightening: no immediate win
         // exists, so the earliest win is in 3 plies; symmetric bound
         // when prepare() certified it.
         let empties = self.cells - self.moves;
@@ -703,8 +703,7 @@ impl FastExactSolver {
                 s += 5_000;
             }
             self.play(c);
-            let terminal_after =
-                self.moves == self.cells || self.has_line(self.mask ^ self.cur);
+            let terminal_after = self.moves == self.cells || self.has_line(self.mask ^ self.cur);
             if !terminal_after {
                 s += self.winning_spots(self.mask ^ self.cur).count_ones() as i32 * 100;
                 // Child TT probe for ordering (cells-moves after the move).
@@ -752,8 +751,13 @@ impl FastExactSolver {
     fn reconstruct_variation(&mut self) -> Vec<Move> {
         // PV-walking plays moves; snapshot and restore so the instance
         // stays consistent for bookgen/parallel reuse.
-        let (save_cur, save_mask, save_heights, save_moves, save_odd) =
-            (self.cur, self.mask, self.heights.clone(), self.moves, self.odd_height_columns);
+        let (save_cur, save_mask, save_heights, save_moves, save_odd) = (
+            self.cur,
+            self.mask,
+            self.heights.clone(),
+            self.moves,
+            self.odd_height_columns,
+        );
         let mut pv = Vec::new();
         while self.moves < self.cells && pv.len() as i32 <= self.cells {
             if self.moves > 0 && self.has_line(self.mask ^ self.cur) {
@@ -1104,8 +1108,7 @@ impl FastExactSolver {
         }
         self.tt_cur[slot] = key.cur;
         self.tt_mask[slot] = key.mask;
-        self.tt_data[slot] =
-            (lower & 0xFF) | ((upper & 0xFF) << 8) | ((canonical_col + 1) << 16);
+        self.tt_data[slot] = (lower & 0xFF) | ((upper & 0xFF) << 8) | ((canonical_col + 1) << 16);
         self.tt_used[slot] = true;
     }
 

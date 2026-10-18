@@ -146,7 +146,7 @@ impl OpeningBook {
             }
             let mut it = line.split_whitespace();
             let (Some(c), Some(m), Some(s)) = (it.next(), it.next(), it.next()) else {
-                continue; // short lines are ignored, as in the Java loader
+                continue; // short lines are ignored
             };
             let cur = parse_hex(c, lineno)?;
             let mask = parse_hex(m, lineno)?;
@@ -181,8 +181,7 @@ impl OpeningBook {
         }
         // Write-then-rename so an interrupted run never leaves a torn book.
         let tmp = path.with_extension("book.tmp");
-        std::fs::write(&tmp, s)
-            .map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+        std::fs::write(&tmp, s).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
         std::fs::rename(&tmp, path)
             .map_err(|e| format!("cannot rename to {}: {e}", path.display()))?;
         Ok(())

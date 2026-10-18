@@ -332,18 +332,24 @@ impl core::fmt::Display for SearchResult {
             s.push_str(&format!(
                 " | best move: {}{}",
                 m.notation(),
-                if self.move_is_proven_optimal { " (proven optimal)" } else { "" }
+                if self.move_is_proven_optimal {
+                    " (proven optimal)"
+                } else {
+                    ""
+                }
             ));
         }
         s.push_str(&format!(" | score: {}", self.score));
         if let Some(p) = self.plies_to_end {
             s.push_str(&format!(" | ends in {p} plies"));
         }
-        s.push_str(&format!(" | nodes: {} | {} ms", self.nodes, self.elapsed_millis));
+        s.push_str(&format!(
+            " | nodes: {} | {} ms",
+            self.nodes, self.elapsed_millis
+        ));
         if !self.principal_line.is_empty() {
             s.push_str("\n  PV: ");
-            let parts: Vec<String> =
-                self.principal_line.iter().map(|m| m.notation()).collect();
+            let parts: Vec<String> = self.principal_line.iter().map(|m| m.notation()).collect();
             s.push_str(&parts.join(" "));
         }
         s.push_str("\n  ");

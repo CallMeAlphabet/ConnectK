@@ -35,26 +35,57 @@ const SOURCE_STANDARD: &str = "Standard 7x6 solution (Allen / Allis 1988; exact 
 // (width, height, outcome for player one, last-move ply or -1 unknown),
 // sorted by (width, height) for binary search.
 static EMPTY_BOARD: &[(i32, i32, Outcome, i32)] = &[
-    (4, 4, Outcome::Draw, 16), (4, 5, Outcome::Draw, 20), (4, 6, Outcome::Draw, 24),
-    (4, 7, Outcome::Draw, 28), (4, 8, Outcome::Draw, 32), (4, 9, Outcome::Draw, 36),
-    (4, 10, Outcome::Draw, 40), (4, 11, Outcome::Draw, 44), (4, 12, Outcome::Draw, 48),
+    (4, 4, Outcome::Draw, 16),
+    (4, 5, Outcome::Draw, 20),
+    (4, 6, Outcome::Draw, 24),
+    (4, 7, Outcome::Draw, 28),
+    (4, 8, Outcome::Draw, 32),
+    (4, 9, Outcome::Draw, 36),
+    (4, 10, Outcome::Draw, 40),
+    (4, 11, Outcome::Draw, 44),
+    (4, 12, Outcome::Draw, 48),
     (4, 13, Outcome::Draw, 52),
-    (5, 4, Outcome::Draw, 20), (5, 5, Outcome::Draw, 25), (5, 6, Outcome::Draw, 30),
-    (5, 7, Outcome::Draw, 35), (5, 8, Outcome::Draw, 40), (5, 9, Outcome::Draw, 45),
-    (5, 10, Outcome::Draw, 50), (5, 11, Outcome::Draw, 55), (5, 12, Outcome::Draw, 60),
+    (5, 4, Outcome::Draw, 20),
+    (5, 5, Outcome::Draw, 25),
+    (5, 6, Outcome::Draw, 30),
+    (5, 7, Outcome::Draw, 35),
+    (5, 8, Outcome::Draw, 40),
+    (5, 9, Outcome::Draw, 45),
+    (5, 10, Outcome::Draw, 50),
+    (5, 11, Outcome::Draw, 55),
+    (5, 12, Outcome::Draw, 60),
     (5, 13, Outcome::Draw, 65),
-    (6, 4, Outcome::Loss, 24), (6, 5, Outcome::Draw, 30), (6, 6, Outcome::Loss, 36),
-    (6, 7, Outcome::Win, 41), (6, 8, Outcome::Loss, 48), (6, 9, Outcome::Win, 53),
-    (6, 10, Outcome::Loss, 60), (6, 11, Outcome::Win, 63), (6, 12, Outcome::Loss, 72),
-    (7, 4, Outcome::Draw, 28), (7, 5, Outcome::Draw, 35), (7, 6, Outcome::Win, 41),
-    (7, 7, Outcome::Draw, 49), (7, 8, Outcome::Win, 55), (7, 9, Outcome::Draw, 63),
+    (6, 4, Outcome::Loss, 24),
+    (6, 5, Outcome::Draw, 30),
+    (6, 6, Outcome::Loss, 36),
+    (6, 7, Outcome::Win, 41),
+    (6, 8, Outcome::Loss, 48),
+    (6, 9, Outcome::Win, 53),
+    (6, 10, Outcome::Loss, 60),
+    (6, 11, Outcome::Win, 63),
+    (6, 12, Outcome::Loss, 72),
+    (7, 4, Outcome::Draw, 28),
+    (7, 5, Outcome::Draw, 35),
+    (7, 6, Outcome::Win, 41),
+    (7, 7, Outcome::Draw, 49),
+    (7, 8, Outcome::Win, 55),
+    (7, 9, Outcome::Draw, 63),
     (7, 10, Outcome::Win, 69),
-    (8, 4, Outcome::Loss, 32), (8, 5, Outcome::Win, 39), (8, 6, Outcome::Loss, 48),
-    (8, 7, Outcome::Win, 53), (8, 8, Outcome::Loss, 62), (8, 9, Outcome::Win, -1),
-    (9, 4, Outcome::Loss, 36), (9, 5, Outcome::Win, 41), (9, 6, Outcome::Loss, 52),
+    (8, 4, Outcome::Loss, 32),
+    (8, 5, Outcome::Win, 39),
+    (8, 6, Outcome::Loss, 48),
+    (8, 7, Outcome::Win, 53),
+    (8, 8, Outcome::Loss, 62),
+    (8, 9, Outcome::Win, -1),
+    (9, 4, Outcome::Loss, 36),
+    (9, 5, Outcome::Win, 41),
+    (9, 6, Outcome::Loss, 52),
     (9, 7, Outcome::Win, 55),
-    (10, 4, Outcome::Loss, 40), (10, 5, Outcome::Win, 47), (10, 6, Outcome::Win, 59),
-    (11, 4, Outcome::Loss, 44), (11, 5, Outcome::Win, 51),
+    (10, 4, Outcome::Loss, 40),
+    (10, 5, Outcome::Win, 47),
+    (10, 6, Outcome::Win, 59),
+    (11, 4, Outcome::Loss, 44),
+    (11, 5, Outcome::Win, 51),
     (12, 4, Outcome::Loss, 48),
 ];
 
@@ -103,10 +134,10 @@ pub fn lookup(p: &Position) -> Option<TheoryResult> {
         }
         // Outcome for the side to move (player two) and the final ply.
         let (outcome, end_ply) = match first_column {
-            3 => (Outcome::Loss, 41),     // centre: first player wins
+            3 => (Outcome::Loss, 41), // centre: first player wins
             2 | 4 => (Outcome::Draw, 42),
-            1 | 5 => (Outcome::Win, 42),  // second player wins
-            _ => (Outcome::Win, 40),      // columns 1 and 7 (0-based 0,6)
+            1 | 5 => (Outcome::Win, 42), // second player wins
+            _ => (Outcome::Win, 40),     // columns 1 and 7 (0-based 0,6)
         };
         return Some(TheoryResult {
             outcome,

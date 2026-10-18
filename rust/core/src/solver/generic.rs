@@ -7,7 +7,7 @@
 
 use super::{Abort, Certainty, SearchControl, SearchResult};
 use crate::hash::{fast_map_with_capacity, FastMap};
-use crate::model::{Move, Outcome, Player, Rules};
+use crate::model::{Move, Outcome, Rules};
 use crate::position::{Position, PositionKey};
 use std::time::Instant;
 
@@ -259,10 +259,7 @@ impl ExactSolver {
             }
             let threats = self.pos.line_completing_moves(side.other());
             if threats.len() >= 2 {
-                return Prepared::Forced(
-                    -(self.cells - moves - 1),
-                    legal.first().copied(),
-                );
+                return Prepared::Forced(-(self.cells - moves - 1), legal.first().copied());
             }
             if threats.len() == 1 {
                 legal = threats;
@@ -270,8 +267,11 @@ impl ExactSolver {
         } else {
             let suicides = self.pos.line_completing_moves(side);
             if !suicides.is_empty() {
-                let safe: Vec<Move> =
-                    legal.iter().copied().filter(|m| !suicides.contains(m)).collect();
+                let safe: Vec<Move> = legal
+                    .iter()
+                    .copied()
+                    .filter(|m| !suicides.contains(m))
+                    .collect();
                 if safe.is_empty() {
                     return Prepared::Forced(-(self.cells - moves), Some(legal[0]));
                 }
@@ -304,7 +304,10 @@ impl ExactSolver {
             if !self.pos.is_terminal() {
                 s += self.pos.count_winning_spots(side) as i32 * 100;
                 if !self.rules.misere
-                    && !self.pos.line_completing_moves(self.pos.side_to_move()).is_empty()
+                    && !self
+                        .pos
+                        .line_completing_moves(self.pos.side_to_move())
+                        .is_empty()
                 {
                     s -= 20_000;
                 }
@@ -312,7 +315,7 @@ impl ExactSolver {
             self.pos.unapply_resolved(mv);
             scored.push((mv, s));
         }
-        scored.sort_by(|a, b| b.1.cmp(&a.1)); // stable, like List.sort
+        scored.sort_by_key(|a| std::cmp::Reverse(a.1)); // stable, like List.sort
         scored.into_iter().map(|(m, _)| m).collect()
     }
 
@@ -356,10 +359,4 @@ fn terminal_score(p: &Position, cells: i32) -> i32 {
             }
         }
     }
-}
-
-// Referenced for API parity with Java (Player in signatures above).
-#[allow(dead_code)]
-fn _side(p: &Position) -> Player {
-    p.side_to_move()
 }

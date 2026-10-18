@@ -8,9 +8,7 @@ use super::depth::DepthLimitedSolver;
 use super::fast::FastExactSolver;
 use super::generic::ExactSolver;
 use super::parallel::ParallelExactSolver;
-use super::{
-    Certainty, ProgressFn, SearchControl, SearchResult, SolveMode, SolveRequest,
-};
+use super::{Certainty, ProgressFn, SearchControl, SearchResult, SolveMode, SolveRequest};
 use crate::book::OpeningBook;
 use crate::model::{Outcome, Placement};
 use crate::position::Position;
@@ -40,10 +38,7 @@ impl ConnectKSolver {
     pub fn with_book(book: Option<Arc<OpeningBook>>) -> ConnectKSolver {
         ConnectKSolver { book, threads: 1 }
     }
-    pub fn with_book_and_threads(
-        book: Option<Arc<OpeningBook>>,
-        threads: usize,
-    ) -> ConnectKSolver {
+    pub fn with_book_and_threads(book: Option<Arc<OpeningBook>>, threads: usize) -> ConnectKSolver {
         ConnectKSolver {
             book,
             threads: threads.max(1),
@@ -154,8 +149,7 @@ impl ConnectKSolver {
             request.max_depth,
             mk(request.node_limit, remaining),
         );
-        let total_nodes =
-            heuristic.nodes + exact_attempt.as_ref().map(|e| e.nodes).unwrap_or(0);
+        let total_nodes = heuristic.nodes + exact_attempt.as_ref().map(|e| e.nodes).unwrap_or(0);
         if let Some(t) = &theory_hit {
             let note = format!(
                 "Outcome is published mathematical theory ({}). The recommended move \
@@ -221,7 +215,7 @@ fn elapse(start: Instant) -> u64 {
 }
 
 fn remaining_millis(request: &SolveRequest, start: Instant) -> u64 {
-    if request.time_limit_millis <= 0 {
+    if request.time_limit_millis == 0 {
         return 0;
     }
     let left = request.time_limit_millis as i64 - elapse(start) as i64;
