@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = ["core", "cli"]
+exclude = ["gui/src-tauri"]
+
+# Release profile per The Rust Performance Book's "maximize runtime speed"
+# summary: single codegen unit, fat LTO, abort on panic (no unwinding
+# machinery), stripped symbols. See docs/PERFORMANCE.md (Rust round).
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# The property tests run thousands of exact solves; keep them fast.
+[profile.test]
+opt-level = 2

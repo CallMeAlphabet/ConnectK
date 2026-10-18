@@ -1,87 +1,65 @@
 #!/usr/bin/env bash
-# Zero-dependency build: only a JDK 21+ is required (no Gradle/Maven).
+# Build ConnectK's Rust workspace.
 #
 # Usage:
-#   ./build.sh          build all modules that exist (core, cli, gui)
-#   ./build.sh test     build and run the core test suite
-#   ./build.sh core     build only the core module
-#   ./build.sh cli      build core + cli
-#   ./build.sh gui      build core + gui
-#   ./build.sh clean    remove build/ and dist/
+#   ./build.sh          release-build the engine and CLI
+#   ./build.sh test     run the engine/CLI test suite
+#   ./build.sh core     release-build only connectk-core
+#   ./build.sh cli      release-build only the CLI (includes core)
+#   ./build.sh gui      release-build the optional Tauri GUI
+#   ./build.sh all      release-build engine, CLI, and GUI (if present)
+#   ./build.sh clean    remove Cargo build outputs
 #
-# Modules whose directory does not exist are skipped silently. That is the
-# point of the layout: delete the gui/ directory and this script still
-# builds core + cli. Delete cli/ too and you have a pure engine library.
+# The GUI is a separate Cargo workspace under rust/gui/src-tauri. It is
+# intentionally not part of the default build: it needs the WebKitGTK
+# system stack, while the engine and CLI need only a Rust toolchain.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-if [[ -n "${JAVA_HOME:-}" && -x "$JAVA_HOME/bin/javac" ]]; then
-  JAVAC="$JAVA_HOME/bin/javac"
-  JAVA="$JAVA_HOME/bin/java"
-  JAR="$JAVA_HOME/bin/jar"
-else
-  JAVAC="$(command -v javac || true)"
-  JAVA="$(command -v java || true)"
-  JAR="$(command -v jar || true)"
-fi
-if [[ -z "${JAVAC:-}" ]]; then
-  echo "error: javac not found. On Arch Linux:  sudo pacman -S jdk21-openjdk" >&2
-  exit 1
-fi
-VERSION="$("$JAVAC" -version 2>&1 | awk '{print $2}' | cut -d. -f1)"
-if [[ "$VERSION" -lt 21 ]]; then
-  echo "error: JDK 21+ required, found javac $VERSION" >&2
-  echo "On Arch Linux:  sudo pacman -S jdk21-openjdk   (and set JAVA_HOME if needed)" >&2
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "error: cargo not found. Install Rust via https://rustup.rs/ or your package manager." >&2
+  echo "On Arch Linux, for example:  sudo pacman -S rustup && rustup default stable" >&2
   exit 1
 fi
 
-TARGET="${1:-all}"
-case "$TARGET" in
-  clean) rm -rf build dist; echo "cleaned"; exit 0 ;;
-esac
-
-mkdir -p build dist
-compile_module() {
-  local name="$1" main_class="${2:-}" extra_path="${3:-}"
-  local out="build/$name"
-  mkdir -p "$out"
-  find "$name/src/main/java" -name '*.java' > "build/$name.sources"
-  if [[ -n "$extra_path" ]]; then
-    "$JAVAC" --release 21 --module-path "$extra_path" -d "$out" @"build/$name.sources"
+build_gui() {
+  if [[ -d rust/gui/src-tauri ]]; then
+    (cd rust/gui/src-tauri && cargo build --release)
+    echo "built rust/gui/src-tauri/target/release/connectk-gui"
   else
-    "$JAVAC" --release 21 -d "$out" @"build/$name.sources"
+    echo "GUI directory absent; skipping GUI build"
   fi
-  local jar_file="dist/connectk-$name.jar"
-  if [[ -n "$main_class" ]]; then
-    "$JAR" --create --file "$jar_file" --main-class "$main_class" -C "$out" .
-  else
-    "$JAR" --create --file "$jar_file" -C "$out" .
-  fi
-  echo "built $jar_file"
 }
 
-compile_module core
-
-want_cli=0; want_gui=0; run_tests=0
+TARGET="${1:-cli}"
 case "$TARGET" in
-  all)  want_cli=1; want_gui=1 ;;
-  test) want_cli=1; want_gui=1; run_tests=1 ;;
-  core) ;;
-  cli)  want_cli=1 ;;
-  gui)  want_gui=1 ;;
-  *) echo "unknown target: $TARGET" >&2; exit 2 ;;
+  clean)
+    (cd rust && cargo clean)
+    if [[ -d rust/gui/src-tauri ]]; then
+      (cd rust/gui/src-tauri && cargo clean)
+    fi
+    echo "cleaned"
+    ;;
+  test)
+    (cd rust && cargo test)
+    ;;
+  core)
+    (cd rust && cargo build --release -p connectk-core)
+    ;;
+  cli)
+    (cd rust && cargo build --release -p connectk-cli)
+    echo "built rust/target/release/connectk"
+    ;;
+  gui)
+    build_gui
+    ;;
+  all)
+    (cd rust && cargo build --release)
+    build_gui
+    ;;
+  *)
+    echo "unknown target: $TARGET" >&2
+    echo "usage: ./build.sh [test|core|cli|gui|all|clean]" >&2
+    exit 2
+    ;;
 esac
-
-if [[ "$want_cli" == 1 && -d cli ]]; then
-  compile_module cli connectk.cli.Main dist/connectk-core.jar
-fi
-if [[ "$want_gui" == 1 && -d gui ]]; then
-  compile_module gui connectk.gui.ConnectKGui dist/connectk-core.jar
-fi
-
-if [[ "$run_tests" == 1 ]]; then
-  mkdir -p build/test
-  find core/src/test/java -name '*.java' > build/test.sources
-  "$JAVAC" --release 21 -cp dist/connectk-core.jar -d build/test @build/test.sources
-  "$JAVA" -cp "build/test:dist/connectk-core.jar" connectk.core.TestMain
-fi

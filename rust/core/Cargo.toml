@@ -1,0 +1,9 @@
+[package]
+name = "connectk-core"
+version = "0.1.0"
+edition = "2021"
+description = "Connect-k engine: exact + heuristic solvers, theory database, opening books"
+
+# Zero external dependencies:
+# everything (hashing included) is implemented in this crate.
+[dependencies]

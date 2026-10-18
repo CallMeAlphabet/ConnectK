@@ -1,0 +1,5 @@
+# Build for the machine that runs the solver (BMI2/AVX2-class codegen where
+# available). This is a personal project built from source; delete this file
+# if you need portable binaries.
+[build]
+rustflags = ["-C", "target-cpu=native"]

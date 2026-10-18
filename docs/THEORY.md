@@ -4,7 +4,7 @@ The engine never claims a position is "solved" unless one of these holds:
 
 1. the exact solver proved it in this run, or
 2. the result is in the table below (encoded in
-   `core/src/main/java/connectk/core/theory/TheoryDatabase.java`).
+   `rust/core/src/theory.rs`).
 
 Everything else is reported as a depth-limited heuristic estimate.
 
