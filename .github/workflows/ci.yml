@@ -1,30 +1,86 @@
-name: build
+name: CI
 
 on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  build-and-test:
-    runs-on: ubuntu-latest
+  engine:
+    name: Engine and CLI
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          distribution: temurin
-          java-version: '21'
+          components: rustfmt, clippy
 
-      - name: Build all modules and run tests
-        run: ./build.sh test
+      - name: Check formatting
+        working-directory: rust
+        run: cargo fmt --all -- --check
 
-      - name: Verify the GUI is removable
+      - name: Run Clippy
+        working-directory: rust
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Run tests
+        working-directory: rust
+        run: cargo test --locked
+
+      - name: Release build
+        working-directory: rust
         run: |
-          cp -r . /tmp/nogui
-          cd /tmp/nogui
-          rm -rf gui run-gui.sh build dist
-          ./build.sh
-          test -f dist/connectk-core.jar
-          test -f dist/connectk-cli.jar
-          test ! -f dist/connectk-gui.jar
+          cargo build --locked --release
+          test -x target/release/connectk
+          ./target/release/connectk help
+
+      - name: Verify the engine builds with the GUI deleted
+        run: |
+          tmp="$(mktemp -d)"
+          cp -a rust "$tmp/rust"
+          rm -rf "$tmp/rust/gui" "$tmp/rust/target"
+          cd "$tmp/rust"
+          cargo test --locked
+
+  gui:
+    name: Tauri GUI check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libssl-dev \
+            libxdo-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --manifest-path rust/gui/src-tauri/Cargo.toml -- --check
+
+      - name: GUI Clippy (includes cargo check)
+        working-directory: rust/gui/src-tauri
+        run: cargo clippy --locked --all-targets -- -D warnings

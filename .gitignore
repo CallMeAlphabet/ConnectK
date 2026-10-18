@@ -1,25 +1,13 @@
-# Build outputs (produced by build.sh)
-build/
-dist/
-*.class
-*.jar
-
-# Local experiments / generated data
-*.book
-*.cfc
-*.log
-bench-results/
-
-# IDEs / editors
-.idea/
-*.iml
-.vscode/
-.settings/
-.project
-.classpath
-
-# OS
-.DS_Store
-
 # Rust build outputs
-target/
+rust/target/
+rust/gui/src-tauri/target/
+rust/gui/src-tauri/gen/
+
+# Generated opening books are regenerable solver output.
+books/*.book
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+*.swp

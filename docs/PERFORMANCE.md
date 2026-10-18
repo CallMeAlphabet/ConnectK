@@ -1,297 +1,131 @@
-# Performance: benchmarks, and what we learned from Kite
+# Performance and correctness validation (Rust)
 
-This document records (1) how we benchmark the exact solvers,
-(2) measured before/after numbers for the fast solver, (3) a
-technique-by-technique analysis of the
-[Kite](https://github.com/tristan852/kite) Java Connect Four solver
-(read from its source, Oct 2026) versus this project, (4) round-2
-results (dual-bound TT, MTD(f) experiment, parallel proving, opening
-books) including the negative results, (5) what the
-[WeakC4](https://github.com/2swap/WeakC4) weak solution teaches, and
-(6) the remaining roadmap.
+This document records what the Rust implementation measures today, how
+it was validated against the implementation it replaced, and where it
+honestly stands relative to specialized standard-7×6 solvers. Unless a
+row says otherwise, measurements were taken in the constrained
+2-core/2 GB Linux sandbox used for development; absolute nodes/second
+will be higher on a normal desktop, and node counts (the portable
+metric) are reported wherever possible.
 
-**Licensing note.** Kite and WeakC4 are GPLv3 and Pascal Pons's reference solver
-is AGPLv3. We study their *algorithms* — negamax/alpha-beta, bitboards,
-transposition tables, null-window search, threat pruning, opening
-books; all standard techniques described in the literature (Allis
-1988; Tromp's Fhourstones; Pons's tutorial) — and implement them
-independently. No code is copied. (Using Kite as a code dependency
-instead was considered and rejected: it would impose GPL on
-distribution and only covers standard 7x6, while this engine is
-generic over board size, k, directions, placement and misère.)
+## Build configuration
 
-## Benchmark protocol
+Following the [Rust Performance Book](https://nnethercote.github.io/perf-book/):
 
-`core/src/test/java/connectk/core/BenchMain.java` loads Pascal
-Pons's public test sets (1,000 positions each: endgame/midgame/opening
-× easy/medium/hard; move sequence + expected score) — the same
-protocol used by Fhourstones and Kite. The data files are *not*
-committed; see the download link in the class javadoc.
+* engine/CLI workspace (`rust/Cargo.toml`): `opt-level = 3`,
+  `lto = "fat"`, `codegen-units = 1`, `panic = "abort"`, `strip = true`;
+* `rust/.cargo/config.toml`: `target-cpu=native` (delete for portable
+  binaries);
+* `[profile.test] opt-level = 2`, because the property tests run
+  thousands of exact solves;
+* Tauri GUI crate: thin LTO instead of fat — linking the GTK/WebKitGTK
+  dependency tree with fat LTO needs several GB of RAM, and the engine
+  code still compiles at opt-level 3.
 
-```bash
-./build.sh test   # compiles test sources into build/test
-java -cp build/test:dist/connectk-core.jar connectk.core.BenchMain \
-    path/to/midgame_medium.txt 200 10000 fast    # or: generic
-```
+The exact solver's hot loop is allocation-free: primitive `u64` board
+words, fixed-capacity open-addressing tables with packed keys, and
+preallocated per-ply move scratch arrays. The default transposition table is 2^22 entries
+(smaller for small solves); `CONNECTK_TT_CAPACITY` overrides it.
 
-One solver instance is reused per run (its transposition table is
-cleared per position, like Pons's `reset()`); a short JIT warm-up is
-discarded. Reported throughput uses solver-reported search time.
-Score agreement is checked against the expected value on every
-position (Pons score = `sign * ceil(|ourScore|/2)`).
+## Startup and footprint
 
-## Measured results (2026-10-17, sandbox: 2 vCPU, Temurin 21, -Xmx1200m)
+| Measurement | Value |
+|---|---:|
+| Stripped CLI binary | 641,208 bytes (~0.6 MB) |
+| Stripped Tauri GUI binary | 5,814,864 bytes (~5.6 MB; uses system WebKitGTK) |
+| No-work CLI call (`connectk theory --width 7 --height 6`) | ~0.016 s wall |
+| Engine test suite | 36 tests, ~0.7–1.3 s |
 
-Absolute numbers from a weak shared sandbox — use them for
-*relative* comparison; expect several× higher nodes/sec on a modern
-desktop. "Generic" = original `ExactSolver`, "Fast" = new
-`FastExactSolver`. Subsets are the first N positions of each file.
+There is no runtime to start and nothing to warm up: the first exact
+solve runs at full speed.
 
-| Test set | N | Generic nodes/pos | Generic ms/pos | Fast nodes/pos | Fast ms/pos |
-|---|---:|---:|---:|---:|---:|
-| endgame_easy | 1000 | 73 | 0.13 | 34 | 0.003 |
-| midgame_easy | 100 | 2,699 | 5.4 | 216 | 0.07 |
-| midgame_medium | 50 | 101,550 | 235 | 43,774 | 25 |
-| opening_easy | 100 | 18/20 solved @30 s cap | ~5,300 (solved) | 48,307 | 27 |
-| opening_medium | 100 | not attempted | – | 1,189,763 | 695 |
-| opening_hard | 50 | not attempted | – | 48.3M (48/50 @120 s cap) | 30,200 |
+## Parity with the previous solver
 
-Single-thread throughput: generic ≈ 0.43–0.63M nodes/s, fast ≈
-1.6–1.9M nodes/s (solver-reported). The bigger factor on easy/medium
-sets is *node count* (PVS + direct score bounds + non-losing-move
-restriction), not just node speed.
+The port was required to be *semantically identical* before it was
+allowed to be faster. Two checks pin that down:
 
-Empty-board probes through the CLI (`--mode exact --no-theory`,
-90 s cap, fast solver): standard 7×6 explored 144M nodes and
-no-diagonals 7×6 explored 194M nodes, both inconclusive. For
-reference, Kite solves the empty standard board with ~234M node
-evaluations total (its README benchmark, desktop CPU) — our node
-*rate* is now in a sane range; our node *count* for hard positions
-is the remaining gap (see roadmap).
+* **Node parity.** The hard standard opening `1,3,7,1,2` at table size
+  2^22 takes **76,563,549 nodes** — exactly the previous solver's count —
+  and the Pons `endgame_easy` set totals 30,663 nodes, also exact.
+  (At 2^21 the hard opening needs 84,311,585 nodes, which is why 2^22
+  is the default.)
+* **Book parity.** Regenerating `books/std5x4-d12.book` with the Rust
+  `bookgen` produces all 120,204 entries with identical keys, scores,
+  and best-column sets (~1.5 s with 8 worker threads).
 
-### Round 2 (dual-bound TT, TT-move ordering, MTD(f) experiment, parallelism, books)
+## Exact solver on the Pons benchmark sets
 
-Same protocol and subsets, after this round's changes. Node counts on
-the sets are essentially unchanged vs round 1 (our threat ordering +
-PVS was already doing most of the work); per-node throughput improved
-slightly (midgame_medium 43,501 nodes/pos at ~2.03M nodes/s):
-
-| Test set | N | Fast r1 nodes/pos | Fast r2 nodes/pos | MTD(f) nodes/pos |
-|---|---:|---:|---:|---:|
-| endgame_easy | 1000 | 34 | 34 | 44 |
-| midgame_easy | 100 | 216 | 214 | 369 |
-| midgame_medium | 50 | 43,774 | 43,501 | 42,151 |
-| opening_easy | 100 | 48,307 | 48,042 | 63,324 |
-| opening_medium | 100 | 1,189,763 | 1,193,197 | 1,389,167 |
-
-* **MTD(f): implemented, measured, reverted.** With a PVS core that
-  already probes siblings with null windows, MTD(f)'s repeated root
-  passes are pure overhead for *strong* solving: +17–31% nodes on the
-  opening sets. This persisted after upgrading the TT to store both
-  bounds, so bound-thrashing was not the cause. The dual-bound TT and
-  TT-move ordering were kept (≈neutral here, principled, and a
-  prerequisite if MTD is revisited for *weak* solving); the PVS root
-  driver stays. The bounded search built for the experiment remains
-  as `FastExactSolver.searchBound`.
-* **Parallel single-position proving: correct, not yet faster at
-  2 cores.** On hard opening `13712` (first `opening_hard` entry):
-  sequential 71.4 s / 113.9M nodes; naive frontier splitting
-  (exact-solve all 49 depth-2 subpositions) UNKNOWN @300 s after
-  920M nodes — it loses root bound sharing and the shared TT, a
-  useful negative result now documented in `ParallelExactSolver`.
-  The replacement (root PVS splitting: first move exact, siblings
-  refuted by parallel null-window tests) proves it in 94.0 s /
-  171.0M nodes on 2 threads — still behind sequential, whose single
-  shared TT exploits transpositions between sibling subtrees. The
-  known fix is a lockless *shared-TT* parallel search (YBWC-style);
-  until then `--threads` is opt-in and mainly helps batch work.
-* **Opening books: infrastructure + generator work as designed.**
-  `bookgen` on 6×4, depth 8: 30,447 canonical positions, all solved,
-  29 s on 2 threads (checkpointed/resumable). Effect: the empty-6×4
-  proof drops from 338,533 nodes / 205 ms to 2,250 nodes / 14 ms;
-  a position *at* book depth answers in 1 node / 0 ms. This is the
-  same mechanism that makes Kite's opening numbers look magical.
-  Sizing honesty for 7×6: a 50-position depth-10 sample cost
-  ~2.0M nodes ≈ 1.3 core-seconds per position, and there are on the
-  order of a million canonical positions at that depth — so a full
-  standard frontier book is hundreds of core-hours with the current
-  solver (days on a many-core desktop, resumable throughout), and
-  gets cheaper with every node-count improvement above. Kite's
-  68M-position book was certainly a comparable compute project.
-
-
-### Round 3 (claim-even, ordering experiments, generated book library)
-
-* **Claim-even knowledge bound** (Victor Allis 1988), implemented as a
-  score upper bound inside the fast search, generic over even-height
-  gravity boards, any k and direction set (Kite's is standard-7x6
-  only). The pairing-strategy proof is sketched in the method
-  javadoc; soundness was *not* assumed: a dedicated test checks the
-  bound against generic-solver exact scores, a fuzz harness
-  (`ClaimFuzzMain`, 8,000 playout games, 1,012 exact-checked firings,
-  0 violations) hunts for counterexamples, and full benchmark sets
-  verify every score. That discipline paid off immediately: the
-  first implementation reconstructed lines in the wrong direction
-  (line *starts* vs ends), produced 2 wrong benchmark scores, and
-  was caught before commit; after the fix, all sets agree again.
-* **Ordering:** child transposition-probe ordering (prefer moves
-  whose child already has a stored upper bound for the opponent)
-  kept; soon-threat / playable-threat / fork weights implemented
-  and rejected at several tunings (consistently +10-20% nodes on
-  opening sets — loud threat moves make poor PVS first moves).
-* **Books:** four complete variant books generated with the improved
-  solver (2.04M proven positions; inventory + regeneration in
-  `books/README.md`), including no-diagonals 6x4 whose empty board
-  our engine proves a **draw**. The GUI auto-loads a matching book
-  from `books/` by file-name convention.
-
-| Test set | N | Round-2 nodes/pos | Round-3 nodes/pos | Round-3 ms/pos |
-|---|---:|---:|---:|---:|
-| endgame_easy | 1000 | 34 | 31 | 0.013 |
-| midgame_easy | 100 | 214 | 199 | 0.07 |
-| midgame_medium | 50 | 43,501 | 36,762 | 22.0 |
-| opening_easy | 100 | 48,042 | 40,573 | 26.5 |
-| opening_medium | 100 | 1,193,197 | 954,907 | 674 |
-
-Single hard reference (first `opening_hard` position, `13712`):
-113.9M nodes / 71.4 s sequential in round 2, now **84.3M / 68.6 s**
-in this sandbox. Per-node cost rose (child probes; claim-even
-filter is O(1) incremental), so 90 s empty-board probes now visit
-fewer raw nodes (119.6M standard, 160.9M no-diagonals vs 144M/194M
-in round 2) while needing roughly a quarter fewer nodes to prove
-hard positions. On desktop hardware (several-x this sandbox,
-larger caches) the standard empty board should fall to a from-scratch
-proof in minutes; no-diagonals 7x6 remains a serious run.
-
-## What Kite does (from reading its source)
-
-Kite (`net.kite.internal.board.Board`, ~1,700 lines) is a
-standard-7×6-only, single-threaded exact solver. Its speed comes
-from stacking many node-reduction techniques, plus a large
-precomputed opening book:
-
-| Technique | Kite | This project (after FastExactSolver) |
-|---|---|---|
-| Bitboard state | 2 longs, **8 bits/column** so mirroring is `Long.reverseBytes`; “ceiling” bitboard for landing cells | 2 longs, `height+1` bits/column (generic sizes); mirror by column-chunk reversal. conceptually the same |
-| Position key / hash | canonical `active \| ceiling`, Murmur3-finalizer mix | canonical (current, mask) pair, splitmix-style mix; full-key verification |
-| Transposition table | direct-mapped 64K entries, **1 long/entry** (48-bit partial hash + separate 8-bit min & max score bounds), always-replace + bound merging; plus a 16K “important positions” cache for expensive nodes | open-addressing with full-key verification, **separate lower+upper bounds merged on store** (round 2) + best move, ~2M entries, sized to position |
-| Search driver | **MTD(f)-style weighted binary search** over a null-window core (bound “weights” bias the pivot) | PVS. MTD(f) tried and reverted (+17–31% nodes on openings with a PVS core — see round 2) |
-| Direct score bounds | precomputed min/max tables per stone count; “no immediate win” variants clamp every node | equivalent bounds computed arithmetically (win ≥3 plies / loss ≥4 plies) |
-| Tactical pruning | forced block, **stacked threat** (threat above the block) = loss, moves below opponent threats excluded, double-threat creation detected during ordering | all of these except ordering-time double-threat return (ours is found one ply later via the double-threat shortcut) |
-| Shallow child probes | before recursing, probes TT for *all children* to find immediate refutations / known failing moves | not yet (roadmap) |
-| Knowledge rules | **claim-even** (Victor Allis) implemented with bitboards, caps score at 0 or −1/−2/−3 by row pairs; “can no longer make a non-vertical line” cap | claim-even implemented **generically** (even-height gravity, any k/directions) as a score bound with the same row-derived caps; the non-vertical-line cap is subsumed by its future-lines check. Derived from Allis with a proof sketch + counterexample fuzzing |
-| Move ordering | tuned per-cell score tables (separate per player!) + popcounts of connection opportunities, immediate threats, “soon” threats (one cell above playable), column forks | centre + threat-cell + winning-spots popcount + TT move + **child TT-probe ordering**. Soon-threat/fork weights implemented and measured worse at several tunings (rejected); per-cell tuned tables remain a gap |
-| Opening book | **minimal perfect hash**: 16 MB bucket seeds + 6-bit packed scores for ~68M positions (plies ≤5, =10, =15), ~68 MB via Git LFS; also used *retrogradely* one ply above book depths | generated by our own solver (`bookgen`, any fast-path rules/depth, resumable); sorted-array binary-search lookup keyed by canonical (cur, mask) — simpler than perfect hashing, works for variants Kite cannot cover at all. Book *size* is now a compute choice, not missing tech |
-| Symmetry | mirror-canonical everywhere | yes (when the direction set is mirror-symmetric) |
-| Extras | skill levels/Elo estimation, game/move quality analysis, GraalVM native CLI | GUI/CLI analysis instead; skill levels out of scope |
-
-Also noteworthy: Kite reuses one solver instance (and its caches)
-across calls, and its caches are *tiny* (64K/16K entries) — with a
-strong ordering + bounds, most searches never need a huge table; our
-position-sized table follows the same insight less extremely.
-
-
-## What WeakC4 teaches (2swap's search-free weak solution)
-
-[WeakC4](https://2swap.github.io/WeakC4/explanation/) is a *weak*
-solution for standard 7×6: a strategy that guarantees a first-player
-win from the empty board, with **no search at runtime** and ~12 KB
-of data. Structure (from the explanation page and the repo data,
-Oct 2026; GPLv3 — ideas only, as with Kite):
-
-* 654 opening-tree entries (`branches.json`). Following the tree,
-  play reaches a "steady state" leaf after at most 18 plies
-  (522 leaf entries, most at plies 8–14).
-* Only **384 steady-state diagrams** cover all leaves. A diagram
-  labels every empty cell with a priority level; to move: win if
-  possible, block if forced, else play the unique playable cell at
-  the first priority level containing exactly one playable cell
-  (levels with ≥2 "cancel"). Victor Allis's *claim-even* (answer in the same
-  column, claiming all even rows) is the special case that
-  motivated the language. Diagrams were found by genetic search,
-  SAT reduction, and by hand, then brute-force verified.
-* Verification branches only on *opponent* replies (the strategy
-  fixes our moves), so re-checking the whole certificate is cheaper
-  than solving from scratch — their validator reportedly re-verifies
-  faster than Fhourstones solves.
-
-Relevance to this engine:
-
-1. **Claim-even-class parity knowledge is empirically overwhelming.**
-   *Every* leaf of a complete winning strategy closes by a
-   generalized claim-even argument within 18 plies. That is strong
-   evidence that Allis's knowledge rules — claim-even first — are
-   the biggest remaining node-count lever for our search (Kite has
-   bitboard claim-even; we do not). It moves to the top of the
-   roadmap, to be derived from Allis (1988) with a proof sketch and
-   validated against the Pons expected scores and random
-   cross-checks vs the generic solver before being trusted.
-2. **Strategy certificates are a cheaper product than strong
-   solving.** For "prove this empty board is a first-player win"
-   questions (e.g. the unpublished no-diagonals 7×6), extracting and
-   verifying a strategy (branch only on opponent replies) can be
-   exponentially cheaper than strong search. A future
-   extract/verify-strategy feature is on the roadmap; our exact
-   solver + TT already implicitly contains such strategies.
-3. It does **not** replace strong solving: WeakC4 answers nothing
-   about arbitrary positions, the second player, or any variant
-   (sizes, k, no-diagonals, misère…) — exactly the territory where
-   this generic engine is the tool. And it was itself built using
-   strong solvers (Fhourstones/Pons) as substrate, like our books.
-
-## Roadmap (priority order)
-
-1. **Shared-TT parallel search** (lockless TT + YBWC-style work
-   distribution inside the tree) — the design that can actually
-   beat sequential on single hard positions. Needs a careful
-   soundness argument for concurrent bound reads/writes.
-2. **More Allis knowledge rules as validated bounds** (same
-   discipline as claim-even: proof sketch, bound-only integration,
-   counterexample fuzzing, benchmark verification) and **offline
-   move-ordering weight tuning** against the benchmark sets
-   (per-cell tables à la Kite, fitted instead of guessed).
-3. **Bigger generated books** on desktop hardware (`bookgen`):
-   7×6 standard frontier (depth 10–14+), deeper variant books.
-   Optional: retrograde use one ply above book depth, à la Kite.
-4. **Strategy extraction/verification** (WeakC4-inspired): emit a
-   compact winning strategy for a proven-win position and verify it
-   by opponent-only branching — a cheap, independently checkable
-   certificate, and a possible weak-solving path for the open
-   no-diagonals board.
-5. Bigger/bucketed TT experiments (e.g. direct-mapped + "important
-   positions" two-tier cache like Kite's).
-6. SIMD (Vector API) last: the 7×6 board lives in one scalar
-   register and search is branch/hash dominated; expect little.
-
-Done in round 3: claim-even bound (generic version, fuzz-validated),
-child TT-probe move ordering, a 2.04M-position generated book
-library for variant boards, GUI cleanup + automatic book loading.
-Measured and rejected: soon-threat/fork ordering weights.
-
-## Practical settings for long exact attempts (CLI)
+`rust/core/examples/bench.rs` loads Pascal Pons's benchmark files
+(`moves score` lines; download from
+<https://github.com/PascalPons/connect4>, not committed here) and
+converts scores between the two conventions.
 
 ```bash
-# Serious attempt at the (unpublished) no-diagonals 7x6 board:
-CONNECTK_JAVA_OPTS="-Xmx8g" ./run-cli.sh solve --diagonals false \
-    --mode exact --time 3600000 --nodes 0 --no-theory
+# from rust/
+cargo run --release -p connectk-core --example bench -- \
+    /path/to/Test_L3_R1 1000 10000 fast
 ```
 
-The solver reports nodes explored when the budget expires, and
-never guesses. (`--threads N` exists, but on current measurements
-sequential is at least as fast for single hard positions — see
-round 2; the shared-TT design in the roadmap is the real fix.)
+Fast exact solver, single thread, sandbox:
 
-Generate and use an opening book (any fast-path rules; resumable —
-re-run after interruptions and it continues where it stopped):
+| Set | Solved | Total nodes | Nodes/s |
+|---|---:|---:|---:|
+| endgame_easy | 1000/1000 | 30,663 | — |
+| midgame_easy | 1000/1000 | 811,860 | ~1.9 M |
+| midgame_medium | 1000/1000 | 30,773,016 | ~1.7 M |
+| opening_easy | 1000/1000 | 41,880,939 | ~1.7 M |
+| opening_medium | 991/1000 (9 budget timeouts) | 1,087,606,263 incl. aborted | ~1.6 M |
 
-```bash
-# Gauge first, then generate (long-running on all cores; resumable):
-./run-cli.sh bookgen --depth 12 --out books/std7x6-d12.book \
-    --threads 8 --per-pos-time 120000 --limit 1000   # smoke test
-./run-cli.sh bookgen --depth 12 --out books/std7x6-d12.book \
-    --threads 8 --per-pos-time 120000                # full run, resumes
-./run-cli.sh solve --mode exact --book books/std7x6-d12.book --moves 4,4,5
-```
+Zero score mismatches against the published values.
 
-Book files (`*.book`) are gitignored: they are regenerable products
-of the solver, not source.
+## Depth-limited solver and PVS
+
+The Rust port added interior principal-variation search to the
+depth-limited solver (null-window probes for non-first moves,
+re-searched inside the window). At equal depth the returned scores are
+unchanged; only ties between equally valued moves may resolve
+differently (one observed case: a mirror-symmetric pair). Wall-clock
+at depth 14 on the built-in `depth_bench` positions, before → after:
+
+| Position | Score | Before | After (PVS) |
+|---|---:|---:|---:|
+| empty 7×6 | −23 | 18.1 s | 12.6 s |
+| after `4` | −1198 | 8.4 s | 4.0 s |
+| `44337` | −1 | 1.7 s | 0.8 s |
+
+Node counts can rise where null-window probes miss (empty board
++10 %); nodes/second rises more, so wall time still falls. In GUI play
+this is what buys extra plies inside the same time budget.
+
+## Claim-even validation
+
+Generalized claim-even is tested, not assumed: the test suite checks
+claim-even bounds against the generic exact solver on seeded random
+positions, and the `claim_fuzz` example fuzzes random
+playouts (latest short run: 800 games, 5,157 positions, 93
+exact-checked firings, 0 violations).
+
+## Honest comparison
+
+Specialized standard-7×6 solvers (Pascal Pons's C++, its Rust ports,
+Kite) reach roughly 8–20 M nodes/s on desktop hardware by hard-wiring
+the 7×6 geometry. ConnectK deliberately stays generic — arbitrary
+width/height, K = 3–6, no-diagonals, free placement, misère, published
+theory, and opening books for variants no 7×6-only solver covers —
+which costs constant factors in the inner loop. In this sandbox the
+Rust engine is modestly faster per node than the solver it replaced
+(~1.6–2.0 M vs ~1.3–1.5 M nodes/s) with dramatically better startup,
+and identical node counts mean no solved position was lost in the move.
+Beating the specialized solvers' raw 7×6 speed remains future work;
+claiming otherwise would be dishonest.
+
+Ideas measured and rejected during development (kept out deliberately):
+column-history ordering in the fast solver (more nodes), transposition
+probe gates tighter than 12 plies remaining, 2^23 default tables
+(memory pressure, no node win), an MTD(f) root driver, and null-move /
+late-move reductions anywhere near exact search (unsound for proofs).
+
+Future work, in expected-value order: profile-guided optimization
+(`cargo-pgo`) for release builds, a 7×6-specialized inner loop behind
+the generic API, larger generated books for the 7×4/6×4 variants, and
+desktop-hardware benchmark runs to replace the sandbox numbers above.

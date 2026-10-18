@@ -1,171 +1,180 @@
-# Connect-k Solver
+# ConnectK
 
-A generic Connect-4/5/6-style game engine and solver in pure Java 21.
-One parameterised ruleset covers board width/height, line length **k**,
-**diagonals on/off**, **gravity or free placement**, and **misère**
-(making a line loses).
+A generic Connect-4/5/6-style game engine and solver in Rust. It aims to
+play **provably perfectly** wherever that is computationally feasible, and
+to be explicit whenever it cannot:
 
-The solving policy is honest about mathematics:
+* **Mathematical results first** — published solved boards (Tromp/Allis,
+  e.g. standard 7×6 is a first-player win on move 41) are answered from a
+  theory database without search.
+* **Exact search where feasible** — a bitboard negamax/PVS solver with a
+  dual-bound transposition table, exact threat bounds, generalized
+  claim-even, mirror symmetry, and resumable exact opening books.
+* **Depth-limited play where no proof is available** — heuristic results
+  are labelled `HEURISTIC_DEPTH_LIMITED`, never presented as proofs.
+* If an exact search runs out of budget, the engine says
+  `UNKNOWN_LIMIT_REACHED` and declines to recommend a move.
 
-- **Where a position is mathematically solved** — either published
-  (theory database) or proved by exhaustive search in the run — the
-  result is labelled **PROVEN**, with the exact outcome and, when known,
-  a proven optimal move and the ply the game ends on.
-- **Where there is no proof yet**, the engine plays with *depth-limited*
-  search (iterative-deepening alpha-beta + heuristic evaluation) and the
-  result is labelled **HEURISTIC — NOT a proof**.
-- If a proof attempt runs out of budget, you get **UNKNOWN**, never a
-  guess dressed up as a solution.
+Rules are generic: arbitrary width and height, connect length `K`,
+gravity or free placement, optional diagonal wins, and misère mode
+(completing a line loses). The optimized exact solver covers gravity
+games whose padded bitboard layout fits in one 64-bit word, with
+standard (non-misère) play. Other rule
+combinations use a fully generic exact solver.
 
-## Quick start (Arch Linux)
+## Build
+
+The engine and CLI need only a stable Rust toolchain. On Arch Linux:
 
 ```bash
-sudo pacman -S --needed jdk21-openjdk   # or jdk-openjdk (any JDK >= 21)
-
-./build.sh test      # build everything, run the test suite
-./run-gui.sh         # graphical UI
-./run-cli.sh solve   # headless: analyse a position
+sudo pacman -S --needed rustup
+rustup default stable
 ```
 
-No Gradle, no Maven, no downloads: `build.sh` uses only `javac`/`jar`.
-Build outputs land in `dist/` (`connectk-core.jar`, `connectk-cli.jar`,
-`connectk-gui.jar`) as JPMS modules that also work on the classpath.
-
-## CLI examples
+Then:
 
 ```bash
-# Standard game, empty board -> answered from published theory
-./run-cli.sh solve
+./build.sh          # release-build engine + CLI (rust/target/release/connectk)
+./build.sh test     # run the test suite (36 tests, ~1 s)
+./build.sh core     # engine crate only
+./build.sh gui      # optional Tauri GUI (see below)
+```
 
-# No-diagonals variant, depth-limited play (unpublished ruleset)
-./run-cli.sh solve --diagonals false --mode depth --depth 12
+The release profile follows the Rust Performance Book's maximum-speed
+configuration (fat LTO, one codegen unit, `panic = "abort"`, stripped),
+and `rust/.cargo/config.toml` sets `target-cpu=native` for local builds.
+Delete that config file if you build binaries for other machines. The
+engine crate has **zero external dependencies**, so startup is a single
+small native binary (about 0.6 MB; a no-work CLI invocation takes
+~16 ms in the benchmark environment — see `docs/PERFORMANCE.md`).
 
-# Prove a position exactly (here: 6x4 is a second-player win)
-./run-cli.sh solve --width 6 --height 4 --mode exact --time 60000 --nodes 0 --no-theory
+## CLI
 
-# Analyse a concrete game (1-based columns)
-./run-cli.sh solve --moves 4,4,5,3,5,4 --mode auto
-
-# Free placement (Gomoku-style), moves as column:row
-./run-cli.sh solve --placement free --width 9 --height 9 --k 5 \
-    --moves "5:5;5:6;6:5" --mode depth --depth 4
-
-# What does published mathematics say about this board?
+```bash
+./run-cli.sh help
+./run-cli.sh solve --width 5 --height 4                     # proven draw
+./run-cli.sh solve --width 6 --height 4 --threads 4         # proven P2 win
+./run-cli.sh solve --moves 4,4,3,3,7                        # 7x6 position, auto mode
+./run-cli.sh solve --moves 4,4,3,3,7 --mode depth --depth 12
+./run-cli.sh theory                                         # published 7x6 result
 ./run-cli.sh theory --width 8 --height 8
-
-# Watch the engine play itself
-./run-cli.sh selfplay --depth 8 --move-time 300
-
-# Generate an exact opening book (parallel, resumable), then use it
-./run-cli.sh bookgen --width 6 --height 4 --depth 8 --out 6x4-d8.book --threads 4
-./run-cli.sh solve --width 6 --height 4 --mode exact --no-theory --book 6x4-d8.book --time 30000 --nodes 0
+./run-cli.sh selfplay --width 4 --height 4 --mode exact     # perfect game transcript
 ```
 
-`--mode auto` (default) = theory where published, exact proof when
-tractable, otherwise depth-limited. `--mode exact` returns UNKNOWN
-rather than falling back. `--mode depth` never claims a proof.
+Every result states its certainty:
 
-## GUI
+| Certainty | Meaning |
+|---|---|
+| `PROVEN_EXACT` | Found by complete search; score and best move are exact. |
+| `PROVEN_BY_THEORY` | Outcome from published research. The recommended move is proven only when the output says so (`move is proven optimal`). |
+| `HEURISTIC_DEPTH_LIMITED` | Fixed-depth heuristic search. Not a proof. |
+| `UNKNOWN_LIMIT_REACHED` | Budget exhausted; no move is recommended. |
 
-One window: rules bar on top (presets, W/H/K, placement, diagonals,
-misère), the board in the centre (click a column/cell; hover shows the
-landing disc), and an analysis panel on the right — published-theory
-status of the current position, player modes (Human/AI in any
-combination), solver mode/depth/time controls, and an analysis view
-whose badge states plainly whether the answer is *proven* or *heuristic*.
-If a generated opening book for the current rules exists in `books/`
-(see `bookgen`), the GUI loads it automatically — covered positions
-then play perfectly at book speed.
-All searching happens off the UI thread with a working Cancel button.
+Scores are from the side to move: positive means a forced win, and the
+magnitude `cells − final_ply + 1` prefers faster wins and slower losses.
+In `auto` mode the engine uses theory, attempts an exact proof when the
+position looks tractable, and otherwise falls back to depth-limited
+search (keeping a proven outcome from theory when one exists, with the
+move honestly marked heuristic).
 
-![Board rendering](board-screenshot.png)
+Exact options include `--time`, `--nodes`, `--threads` (parallel root
+splitting), `--no-theory`, and `--book FILE`. (The GUI additionally
+auto-loads matching books from `./books`; the CLI takes `--book`
+explicitly.)
 
-## Wayland (Arch)
+### Opening books
 
-Honest status of Java on Wayland in 2026:
-
-- **Stock OpenJDK is still an X11 client.** On a Wayland session, Swing
-  runs through **XWayland** automatically — this GUI works out of the
-  box on GNOME/KDE/Sway/Hyprland etc. as long as XWayland is enabled in
-  your compositor (default everywhere). JavaFX would not be any more
-  native: its Linux backend also targets XWayland today.
-- **Native Wayland exists via JetBrains Runtime / OpenJDK Project
-  Wakefield** (the `WLToolkit`), and Swing is the toolkit it supports.
-  If your `java` is a JetBrains Runtime (or a Wakefield build), the same
-  jar runs natively:
-
-  ```bash
-  CONNECTK_NATIVE_WAYLAND=1 ./run-gui.sh
-  ```
-
-  On stock OpenJDK this makes the JVM fail to start (there is no
-  WLToolkit yet) — expected; just run without the flag.
-- **Fractional scaling**: XWayland apps can look soft at e.g. 125%/150%
-  scaling, depending on compositor settings. The board is vector-drawn,
-  so if needed you can force integer UI scaling, e.g.
-  `CONNECTK_JAVA_OPTS="-Dsun.java2d.uiScale=2" ./run-gui.sh`, or use the
-  native toolkit above, which renders crisply at fractional scales.
-- The UI avoids everything that breaks under Wayland: no absolute window
-  positioning (the compositor places the window), no `Robot`, no tray,
-  no global coordinates.
-
-References: OpenJDK Wakefield pure-Wayland toolkit prototype
-<https://wiki.openjdk.org/display/wakefield/Pure+Wayland+toolkit+prototype>;
-JetBrains, "Wayland By Default in 2026.1 EAP"
-<https://blog.jetbrains.com/platform/2026/02/wayland-by-default-in-2026-1-eap/>;
-OpenJFX XWayland status (JDK-8326710)
-<https://bugs.openjdk.org/browse/JDK-8326710>.
-
-## Removing the GUI
-
-The GUI is one JPMS module and nothing depends on it:
+`bookgen` solves every canonical position up to a given ply with the
+exact solver and writes them in the project's long-standing text format
+(unchanged by the Rust port, so previously generated books still work):
 
 ```bash
-rm -rf gui run-gui.sh
-./build.sh        # still works: builds connectk-core.jar + connectk-cli.jar
-./run-cli.sh solve
+./run-cli.sh bookgen --width 6 --height 4 --diagonals false --depth 12 \
+    --out books/nodiag6x4-d12.book --threads 8 --per-pos-time 20000
 ```
 
-`build.sh` skips modules whose directory is absent. Deleting `cli/` as
-well leaves a pure engine library (`./build.sh core`).
+Generation is resumable and flush-checkpointed: interrupting and
+re-running the same command keeps completed entries. See
+`books/README.md` for the inventory generated so far (book files
+themselves are gitignored because they are regenerable solver output).
 
-## What the solver can and cannot do
+## GUI (optional)
 
-- Exact proofs: small boards from scratch (5x4 draw, 6x4
-  second-player win — both near-instant), plus standard 7x6 positions
-  once enough cells are filled / tactical. A primitive one-word
-  bitboard fast path (`FastExactSolver`) handles gravity rules at
-  millions of nodes/sec: Pons *opening_easy* benchmark positions
-  (~28 empty cells) prove in tens of milliseconds each. Exact work
-  can also be parallelized (`--threads`) and short-circuited by
-  generated opening books (`bookgen` produces them offline for any
-  fast-path rules, resumable; `--book` uses them) — e.g. a depth-8
-  6x4 book cuts that empty-board proof from 338,533 nodes to 2,250.
-  The search also carries a generic claim-even knowledge bound
-  (Victor Allis's pairing strategy, fuzz-validated); a ready-made library
-  of 2.04M proven positions for variant boards lives in `books/`
-  (inventory in `books/README.md`), including the engine-proven
-  empty-board draw for 6x4 without diagonals.
-  The empty
-  standard board is answered from published theory rather than
-  recomputed from scratch. See [docs/PERFORMANCE.md](docs/PERFORMANCE.md)
-  for benchmarks and the comparison with the Kite solver.
-- Depth-limited play uses an evaluation over all potential k-lines
-  (gravity-aware threat support, playable-threat boosts). It plays
-  sensibly at depth 8–12 on 7x6 but is *not* perfect — and says so.
-- Not implemented: official Connect6 (two stones per turn, an unsolved
-  game), PopOut (cyclic games need proof-number search / retrograde
-  analysis), and large-board free-placement proofs (Gomoku was weakly
-  solved with threat-space + proof-number search, a different machinery).
+The GUI is a Tauri 2 application: a small Rust backend over the same
+engine crate, with a single-file HTML/canvas front end rendered by the
+system WebKitGTK webview. In a Wayland session it is a native GTK/Wayland
+window — no XWayland, no Electron, no bundled browser.
 
-See [DESIGN.md](DESIGN.md) for architecture and [docs/THEORY.md](docs/THEORY.md)
-for the published results and their sources.
+![ConnectK Tauri GUI](board-screenshot.png)
+
+On Arch Linux, install the Tauri prerequisites once:
+
+```bash
+sudo pacman -S --needed webkit2gtk-4.1 base-devel openssl \
+    appmenu-gtk-module libappindicator-gtk3 librsvg xdotool
+./run-gui.sh        # builds on first run, then launches the window
+```
+
+Features: clickable board (keyboard `1`–`9` also play columns; `U` undo,
+`N` new game, `H` hint, `Space` AI move), rule presets and custom rules,
+Human vs Human / vs AI /
+AI vs AI, published-theory panel, solver mode/depth/time controls, live
+node counts with cancellation, certainty badge, principal variation, and
+suggested-move and winning-line highlighting. Books in `./books` whose
+names match the selected rules (`std{W}x{H}-d{D}.book`,
+`nodiag{W}x{H}-d{D}.book`) are picked up automatically.
+
+### Removing the GUI
+
+The GUI lives in its own Cargo workspace and nothing depends on it:
+
+```bash
+rm -rf rust/gui run-gui.sh
+./build.sh test     # engine + CLI unaffected
+```
+
+CI verifies this on every run.
+
+## Performance
+
+The Rust engine is node-for-node identical to the solver it replaced on
+the benchmark positions used for validation (e.g. the hard opening
+`1,3,7,1,2` solves in exactly 76,563,549 nodes with a 2^22-entry table),
+while running as a small native binary with no runtime startup cost. On
+the 2-core sandbox used for development it reaches ~1.6–2.0 M nodes/s on
+Pons standard 7×6 benchmark sets; the depth-limited solver gained
+principal-variation search in the Rust port (about 2× faster wall-clock
+at depth 14 on the built-in test positions). Specialized 7×6-only
+solvers are faster on desktop hardware; ConnectK trades some raw speed
+for generic board sizes, K = 3–6, rule variants, theory, and books.
+Details, methodology, and honest comparisons: `docs/PERFORMANCE.md`.
 
 ## Layout
 
 ```
-core/   engine: model, evaluator, solvers, theory database (java.base only)
-cli/    headless command-line front end
-gui/    optional Swing front end (delete freely)
-build.sh / run-cli.sh / run-gui.sh
+rust/
+  core/    engine crate (zero dependencies): bitboard model, exact /
+           parallel / depth-limited solvers, evaluator, theory
+           database, opening books, UI-facing session API
+  cli/     command-line front end (solve, theory, selfplay, bookgen)
+  gui/     optional Tauri app in its own workspace (delete freely)
+books/     generated opening books (gitignored) + inventory README
+docs/      THEORY.md (published results), PERFORMANCE.md (benchmarks)
 ```
+
+Design notes: `DESIGN.md`. Published-theory coverage and sources:
+`docs/THEORY.md`.
+
+Benchmark and validation examples (run from `rust/`):
+
+```bash
+cargo run --release -p connectk-core --example bench -- <file> [n] [ms] [fast]
+cargo run --release -p connectk-core --example depth_bench
+cargo run --release -p connectk-core --example claim_fuzz -- [games] [seed]
+```
+
+## Provenance
+
+All code is original work written for this project. Published *results*
+(game values, benchmark positions) are facts and are cited in
+`docs/THEORY.md`; no third-party solver code or data files are included.

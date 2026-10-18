@@ -1,30 +1,18 @@
 #!/usr/bin/env bash
-# Run the Swing GUI. Builds first if the jars are missing.
+# Run the optional Tauri GUI. Builds the release binary first if missing.
 #
-# Wayland behaviour:
-#  - Stock OpenJDK: Swing is an X11 client and will run through XWayland
-#    automatically. Fractional scaling may look soft; see README.
-#  - JetBrains Runtime / Wakefield JDK: set CONNECTK_NATIVE_WAYLAND=1 to
-#    enable the native Wayland toolkit with the same jar:
-#        CONNECTK_NATIVE_WAYLAND=1 ./run-gui.sh
-#    (On a stock OpenJDK this flag makes the JVM fail to start, because
-#    WLToolkit does not exist there yet — that is expected.)
+# On Arch Linux, Tauri 2 needs the WebKitGTK 4.1 stack, for example:
+#   sudo pacman -S --needed webkit2gtk-4.1 base-devel openssl \
+#       appmenu-gtk-module libappindicator-gtk3 librsvg xdotool
+# plus a stable Rust toolchain. The window is rendered by the system
+# WebKitGTK webview, so it runs natively in a Wayland session.
 set -euo pipefail
-cd "$(dirname "$0")"
-if [[ ! -f dist/connectk-gui.jar ]]; then
-  ./build.sh gui
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+BIN="$ROOT/rust/gui/src-tauri/target/release/connectk-gui"
+
+if [[ ! -x "$BIN" ]]; then
+  "$ROOT/build.sh" gui
 fi
-JAVA_BIN="java"
-if [[ -n "${JAVA_HOME:-}" && -x "$JAVA_HOME/bin/java" ]]; then
-  JAVA_BIN="$JAVA_HOME/bin/java"
-fi
-OPTS=()
-if [[ "${CONNECTK_NATIVE_WAYLAND:-0}" == "1" ]]; then
-  OPTS+=(-Dawt.toolkit.name=WLToolkit)
-fi
-if [[ -n "${CONNECTK_JAVA_OPTS:-}" ]]; then
-  # shellcheck disable=SC2206
-  OPTS+=(${CONNECTK_JAVA_OPTS})
-fi
-exec "$JAVA_BIN" "${OPTS[@]}" --module-path dist \
-  --module connectk.gui/connectk.gui.ConnectKGui "$@"
+# Run from the repository root so the GUI finds ./books/*.book.
+cd "$ROOT"
+exec "$BIN"

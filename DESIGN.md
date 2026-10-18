@@ -1,174 +1,173 @@
-# Design
+# ConnectK design notes
 
-## Module layout
+## Modules
 
 ```
-core/   module connectk.core   — pure engine, depends on java.base only
-  src/main/java/connectk/core/
-    model/    Rules, Position (bitboard), Move, Player, Direction, Bits
-    eval/     Evaluator (heuristic, used only by the depth-limited solver)
-    solver/   ExactSolver, FastExactSolver (one-word gravity fast path),
-              ParallelExactSolver, DepthLimitedSolver,
-              ConnectKSolver (facade), SolveRequest, SearchResult,
-              SolveMode, listeners/tokens
-    theory/   TheoryDatabase (published results), TheoryResult,
-              OpeningBook (generated exact books, see CLI bookgen)
-  src/test/java/connectk/core/TestMain.java   (zero-dependency test runner)
+rust/                  Cargo workspace: members core + cli
+  core/                connectk-core — pure engine, ZERO external crates
+    src/model.rs       Rules, Player, Move, Outcome, Placement, direction sets
+    src/bits.rs        multi-word bitset used by the generic code paths
+    src/position.rs    bitboard position (single u64 fast path,
+                       multi-word generic path), canonical keys
+    src/hash.rs        deterministic FxHash-style map/set for hot tables
+    src/eval.rs        heuristic evaluator for depth-limited play
+    src/theory.rs      published results (see docs/THEORY.md)
+    src/book.rs        exact opening books (load, save, binary-search probe)
+    src/app.rs         GameSession: the small stateful API the GUI uses
+    src/solver/
+      mod.rs           Certainty, SolveMode, SolveRequest, SearchResult,
+                       SearchControl (budgets + cancellation), progress
+      fast.rs          optimized exact solver (gravity, one-word boards)
+      generic.rs       exact solver for every other rule combination
+      parallel.rs      parallel exact solver (root move splitting)
+      depth.rs         depth-limited heuristic solver (PVS)
+      facade.rs        mode dispatch: theory -> exact -> depth fallback
+    examples/          bench.rs (Pons sets), depth_bench.rs, claim_fuzz.rs
+    tests/             engine_tests.rs — 36 tests (cargo test, opt-level 2)
 
-cli/    module connectk.cli    — headless command-line front end
-gui/    module connectk.gui    — optional Swing front end
+  cli/                 connectk-cli — `connectk` binary: solve, theory,
+                       selfplay, bookgen
+
+rust/gui/              OPTIONAL Tauri 2 front end, its OWN Cargo workspace
+  src-tauri/           Rust commands over connectk-core (excluded from the
+                       engine workspace, so `cargo build` in rust/ never
+                       needs the WebKitGTK system stack)
+  ui/index.html        single-file HTML/canvas interface
 ```
 
-Dependency direction is strictly `gui -> core` and `cli -> core`. The core
-contains no AWT/Swing/console code. **Deleting `gui/` (and `run-gui.sh`)
-must always leave a working build** — `build.sh` silently skips missing
-modules, and this is exercised by copying the tree, deleting `gui/`, and
-rebuilding. The same holds for `cli/`.
+The engine crate contains no GUI, console, or file-UI code. **Deleting
+`rust/gui/` (and `run-gui.sh`) removes the GUI completely**; CI runs the
+engine tests on a GUI-free copy of the tree to prove it. The CLI depends
+only on the engine crate; the GUI depends on the engine crate plus Tauri.
 
-JPMS `module-info.java` files enforce the boundaries at compile time, but
-the jars also work on the plain classpath (that is how the test runner
-uses the core jar).
+## Why Rust
 
-## Rules as parameters
+* **Startup and footprint**: one stripped native binary (~0.6 MB for the
+  CLI), no runtime to warm up; a no-work invocation takes ~16 ms.
+* **Hot-loop control**: the exact solver's inner loop is allocation-free
+  primitive-array code — fixed-capacity open-addressing tables, `u64`
+  board words, and stack move lists — which maps directly onto Rust's
+  strengths. The release profile uses the Rust Performance Book's
+  maximum-speed settings (opt-level 3, fat LTO, one codegen unit,
+  `panic = "abort"`, `target-cpu=native` for local builds).
+* **Zero-dependency core**: hashing (FxHash-style), bitsets, and book IO
+  are implemented in-crate. The supply chain for the engine is just the
+  Rust standard library.
+* **Tauri for the GUI**: a native GTK/WebKitGTK window on Wayland with a
+  tiny HTML front end; searches run on `spawn_blocking` threads and
+  report throttled progress events, so the webview never blocks.
 
-A `Rules` record carries width, height, k, placement (gravity/free), the
-set of line directions (any subset — e.g. no diagonals), and the misère
-flag. Rules are consulted in exactly three places:
+## Board representation
 
-- move generation (`Position.legalMoves`),
-- line/threat detection (`Position.hasLine`, `Position.winningSpots`),
-- terminal evaluation (`Position.winner`).
+Two bitboards (occupied mask + current player's stones), bit index
+`col * (height + 1) + row` with one permanently empty sentinel bit per
+column so shift-based line detection cannot wrap between columns.
+Layouts of at most 64 bits fit in one word; larger boards use multiple
+words. Rule combinations outside the fast solver's remit (free
+placement or misère, for example) use the generic solver over the same
+`Position` representation.
 
-All search code is rules-agnostic. Consequences worth remembering:
+Canonical (mirror-minimal) keys compare the mirrored **mask first**,
+then the mirrored current-player word; this exact key definition is the
+opening-book format's identity, so books generated by earlier versions
+of the project remain valid.
 
-- An opening book or theory entry is valid only for the exact `Rules`
-  tuple it was computed for. `TheoryDatabase` therefore refuses to answer
-  for anything but classical gravity Connect-4 with all directions.
-- Turning diagonals off or changing k is a parameter change, but it
-  changes the game completely — the solver must (and does) re-derive
-  everything from search.
+## Score convention
 
-## Position representation
+Scores are from the side to move: `+m` is a forced win, `-m` a forced
+loss, 0 a draw, with `m = cells - final_ply + 1` — preferring faster
+wins and slower losses. Conversion to Pascal Pons's published
+convention is `sign * ceil(|score| / 2)` and is used by the benchmark
+example.
 
-Two bitboards with layout `index = column*(height+1) + row`; the extra
-bit per column is a never-set sentinel that prevents shift-based line
-tests from wrapping across columns.
+## Solvers
 
-- `current` — stones of the side to move; `mask` — all stones.
-  Opponent stones are `mask ^ current`.
-- Play: `current ^= mask; mask |= bit`. Undo is the exact inverse, so
-  search uses one mutable `Position` with play/undo (no allocation per
-  node except transposition keys). Front ends use `copy()` snapshots.
-- Bitboards are `long[]`, so boards needing more than 64 bits
-  (e.g. 10x7 = 80 bits, 19x19 = 380 bits) work unchanged; the common
-  one-word case has allocation-free fast paths for line tests and
-  winning-spot computation.
-- `winningSpots(player)` computes all cells completing a line for any k
-  and any direction subset by AND-ing shifted copies of the player's
-  bitboard over every "hole" offset in a k-window.
-- `canonicalKey()` folds the left-right mirror into transposition keys,
-  but only when the direction set is mirror-symmetric (both diagonals or
-  neither).
+### Fast exact solver (`fast.rs`)
 
-## Solvers and the meaning of a result
+Negamax with principal-variation search over a null-window driver,
+an open-addressing dual-bound transposition table (default 2^22 entries;
+smaller tables for small solves; `CONNECTK_TT_CAPACITY` overrides),
+mirror-canonical keys, immediate-win and exact threat bounds (after any
+move the opponent wins next ply ⇒ tight upper bound), generalized
+**claim-even** (an Allis pairing argument: if every
+line-completing cell lies in claimable even-row pairs, the second player
+can guarantee at least a draw — used as a sound bound, gated on the
+search window), opening-book probes at every node, and move ordering by
+newly created winning spots. No allocation occurs inside the search.
 
-`SearchResult` always carries a `Certainty`:
+### Generic exact solver (`generic.rs`)
 
-| Certainty | Meaning |
-|---|---|
-| `PROVEN_EXACT` | Exhaustive search in this run proved the outcome and the move. |
-| `PROVEN_BY_THEORY` | Outcome from published results (see docs/THEORY.md). `moveIsProvenOptimal` says whether the move is published too. |
-| `HEURISTIC_DEPTH_LIMITED` | Depth-limited search + heuristic evaluation. A strength estimate, never a proof. |
-| `UNKNOWN_LIMIT_REACHED` | Budget ran out; no conclusion. |
+Plain alpha-beta with a canonical-key hash map; correct for every rule
+combination (free placement, misère, multi-word boards). Used as the
+reference implementation in tests and for rule sets the fast path does
+not support.
 
-### ExactSolver
+### Parallel exact solver (`parallel.rs`)
 
-Negamax to the end of the game:
+Solves the centre-most root move exactly, then null-window-tests the
+remaining root moves in parallel scoped threads (each with its own
+solver and table) to refute those that cannot beat the incumbent, and
+exact-solves any survivors sequentially. The result remains exact or
+`UNKNOWN_LIMIT_REACHED`, never a guess.
 
-- alpha-beta windows; exact score convention `±(cells - finalPly + 1)`
-  (faster wins / slower losses preferred), 0 = draw;
-- transposition table (canonical keys, exact/lower/upper bounds);
-- tactical shortcuts: immediate line completion wins; a single opponent
-  threat restricts the move list to the block; two distinct opponent
-  threats are an exact loss in 2 plies; in misère, line-completing moves
-  are suicidal and filtered;
-- move ordering: centre-first, block opponent threats, then by the number
-  of winning spots created; moves that hand the opponent an immediate
-  line are deprioritised;
-- hard node/time/cancellation budgets → `UNKNOWN`, never a guess.
+### Depth-limited solver (`depth.rs`)
 
-Correctness is anchored by tests: the optimized solver is cross-checked
-against an independent brute-force alpha-beta (no table, no shortcuts) on
-random positions across rule variants, and against published outcomes
-(4x4 draw, 6x4 second-player win, 3x3 k=3 draw, standard tactics).
+Iterative-deepening negamax with aspiration windows, interior
+principal-variation search, a depth-aware transposition table, killer
+and history ordering, candidate restriction to relevant columns, and
+immediate-win/block shortcuts over the heuristic evaluator. Apart from
+an already-terminal input, its results are `HEURISTIC_DEPTH_LIMITED`
+(or `UNKNOWN_LIMIT_REACHED` before depth 1 completes): this solver
+never issues proofs.
 
-Practical reach (this Java implementation, single thread): small boards
-from the empty position (e.g. 5x4 in ~0.2 s, 6x4 in ~2 s), standard 7x6
-positions from roughly the last ~25 empty cells depending on how tactical
-they are. The empty 7x6 standard game is answered from published theory,
-not recomputed — a from-scratch proof needs billions of nodes even in
-optimized C++.
+### Facade (`facade.rs`) and certainty
 
-### DepthLimitedSolver
+`SolveMode::{Auto, Exact, Depth}` dispatch:
 
-Iterative-deepening negamax (depth 1, 2, 3, …) so a timeout keeps the
-last complete iteration. Depth-aware transposition table, history
-heuristic, threat-based ordering, and the `Evaluator` at the horizon:
-a sum over all potential k-lines, geometric in stone count, discounted
-by the support stones a gravity threat still needs, and boosted for
-immediately playable threats.
+* Terminal positions are answered exactly in every mode.
+* Published theory is consulted except in pure depth mode; a theory
+  claim with a provably optimal move answers immediately.
+* `Auto` attempts an exact proof only when the position looks tractable
+  (remaining-cells heuristic); on failure it falls back to depth-limited
+  search. If theory proves the outcome but the best move comes from the
+  heuristic search, the result is `PROVEN_BY_THEORY` with
+  `move_proven = false` — the GUI and CLI both print that distinction.
+* `Exact` returns `UNKNOWN_LIMIT_REACHED` (no best move) when the
+  node/time budget runs out, except that a theory outcome may still be
+  reported as such.
 
-For free-placement boards with many empty cells, candidate moves are
-restricted to cells within Chebyshev distance 2 of a stone (capped after
-ordering). This is standard for Gomoku-style play and is disclosed in the
-result explanation — one more reason these results are labelled
-heuristic.
+This honesty layer is the project's core invariant: nothing heuristic
+is ever labelled proven.
 
-### ConnectKSolver (facade) — AUTO policy
+## Opening books (`book.rs`, CLI `bookgen`)
 
-1. Published theory with a published move → answer immediately.
-2. Tractable-looking positions (few cells remaining or small boards) →
-   exact attempt within its own small budget.
-3. Otherwise depth-limited search. If theory knows the outcome but not a
-   move, the outcome is reported as proven and the move (from depth
-   search) is explicitly marked not certified.
+Text format `cur mask score best_columns` under a
+`# connectk-book v1 depth=D` header; entries are kept sorted and probed
+by binary search on the canonical key. `bookgen` enumerates the
+canonical frontier at depth D with packed `(u64, u64)` hash sets,
+solves positions on a bounded worker pool reusing solver instances,
+and appends each solved entry with a flush, so an interrupted run can
+resume without losing work. Only `PROVEN_EXACT` results are written.
 
-`EXACT` mode never falls back to heuristics. `DEPTH_LIMITED` mode never
-consults theory and never claims a proof.
+## GUI backend (`rust/gui/src-tauri`)
 
-## GUI and Wayland
-
-The GUI is a single Swing window:
-
-- All search runs in a `SwingWorker` with a cooperative cancellation
-  token; the EDT never searches. Board input is disabled during a search
-  so results cannot be applied to a changed position.
-- Board rendering is vector Java2D (no image assets), so it scales
-  cleanly.
-- Wayland-safe choices: `setLocationByPlatform(true)` (the compositor
-  places the window — clients cannot know absolute coordinates under
-  Wayland), no `java.awt.Robot`, no system tray, no always-on-top, no
-  multi-window choreography. Rendering goes through XWayland on stock
-  OpenJDK and through the native `WLToolkit` on JetBrains Runtime /
-  Wakefield builds with zero code changes (see README).
+Commands: `get_state`, `new_game`, `play`, `undo`, `cancel`, `analyse`,
+`ai_move`. State is a `GameSession` behind a `Mutex`; analysis clones
+the position under the lock, searches on a blocking thread with a
+shared cancellation flag, emits throttled `search-progress` events,
+and applies an AI move only if the position is unchanged when the
+search finishes. Books named `std{W}x{H}-d{D}.book` or
+`nodiag{W}x{H}-d{D}.book` in `./books` are matched against the active
+rules and loaded automatically.
 
 ## Testing
 
-`./build.sh test` compiles and runs `connectk.core.TestMain`, a
-zero-dependency runner (no JUnit download). It covers model mechanics,
-rule variants (diagonals off, k=5, misère, free placement, multi-word
-boards), exact-solver correctness vs. brute force and vs. published
-results, theory-database behaviour, and solver labelling honesty
-(a DEPTH_LIMITED run must not claim a proof).
-
-## Deliberate non-goals (this version)
-
-- Official **Connect6** (two stones per turn) — unsolved game; would need
-  a different move type and threat machinery.
-- Threat-space / proof-number search for large free-placement boards
-  (that is how Gomoku was weakly solved; our free-placement exact search
-  intentionally covers small boards only).
-- PopOut-style cyclic rule sets (positions can repeat, so plain negamax
-  does not terminate; needs proof-number search or retrograde analysis).
-- Parallel search. The solvers are single-threaded and single-use;
-  parallelising root moves would be the natural next step.
+`cargo test` runs 36 tests in about a second, including: known solved
+boards (5×4 draw, 6×4 second-player win, standard 7×6 opening columns
+against Pons values), fast-vs-generic and parallel-vs-sequential
+agreement on seeded random positions, property tests that bitboard win
+detection and winning-spot sets match brute-force simulation,
+claim-even soundness against exact results, theory-table checks,
+opening-book round trips against the books in `./books`, and terminal /
+facade certainty semantics. The Pons benchmark sets are reproducible
+via the `bench` example; see `docs/PERFORMANCE.md`.
