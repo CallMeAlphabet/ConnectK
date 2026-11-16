@@ -1,0 +1,17 @@
+[package]
+name = "connectk-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Command-line Connect-K solver"
+license = "Apache-2.0"
+repository = "https://github.com/CallMeAlphabet/ConnectK"
+readme = "README.md"
+keywords = ["connect-four", "connect-k", "solver"]
+categories = ["games"]
+
+[[bin]]
+name = "connectk"
+path = "src/main.rs"
+
+[dependencies]
+connectk-core = { version = "0.1.0", path = "../core" }

@@ -1,0 +1,10 @@
+[package]
+name = "connectk-tools"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Rust development utilities for ConnectK"
+
+[[bin]]
+name = "connectk-tools"
+path = "src/main.rs"

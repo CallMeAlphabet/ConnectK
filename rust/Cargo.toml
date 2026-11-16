@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["core", "cli", "tools"]
+exclude = ["gui"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.test]
+opt-level = 2

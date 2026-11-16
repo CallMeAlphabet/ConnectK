@@ -1,0 +1,12 @@
+[package]
+name = "connectk-core"
+version = "0.1.0"
+edition = "2021"
+description = "Connect-K engine with exact and depth-limited solvers, theory, and opening books"
+license = "Apache-2.0"
+repository = "https://github.com/CallMeAlphabet/ConnectK"
+readme = "README.md"
+keywords = ["connect-four", "game-engine", "solver", "board-game"]
+categories = ["games"]
+
+[dependencies]

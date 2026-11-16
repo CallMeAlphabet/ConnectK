@@ -1,0 +1,13 @@
+rust/target/
+rust/gui/target/
+
+books/*.book
+
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+/research/
+/analysis/
+/notes/

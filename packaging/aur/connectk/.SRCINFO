@@ -1,0 +1,17 @@
+pkgbase = connectk
+	pkgdesc = Exact and heuristic Connect-K solver with optional Linux GUI
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/CallMeAlphabet/ConnectK
+	arch = x86_64
+	license = Apache-2.0
+	makedepends = rust
+	depends = gcc-libs
+	depends = gtk3
+	depends = webkit2gtk-4.1
+	provides = connectk
+	conflicts = connectk-bin
+	source = connectk::git+https://github.com/CallMeAlphabet/ConnectK.git#tag=v0.1.0
+	sha256sums = SKIP
+
+pkgname = connectk

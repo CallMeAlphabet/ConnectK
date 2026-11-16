@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>connectk — local</title>
+<link rel="icon" href="/icon.png" type="image/png">
+<style>
+  :root {
+    --bg: #090909;
+    --fg: #f2f2f0;
+    --muted: #999995;
+    --border: #292929;
+    --accent: #4ade80;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: ui-sans-system, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    max-width: 42rem;
+    margin: 0 auto;
+    padding: 0 24px 48px;
+  }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 24px;
+    padding: 32px 0 48px;
+  }
+  .brand, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .brand { color: var(--fg); font-size: 14px; text-decoration: none; }
+  nav { color: var(--muted); font-size: 14px; }
+  nav span + span { margin-left: 24px; }
+  h1 {
+    margin: 0;
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 32px;
+    font-weight: 400;
+    line-height: 1.15;
+    letter-spacing: 0;
+  }
+  .intro {
+    margin: 16px 0 0;
+    color: var(--muted);
+    font-size: 15px;
+    line-height: 1.65;
+  }
+  .card {
+    margin-top: 32px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 18px;
+  }
+  .card-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 14px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+  }
+  .card-head .muted, .muted { color: var(--muted); }
+  #status { min-height: 18px; overflow-wrap: anywhere; }
+  #board {
+    display: block;
+    width: 100%;
+    height: auto;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  #err {
+    min-height: 18px;
+    margin-top: 12px;
+    color: #c0392b;
+    font-size: 13px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+  section { margin-top: 28px; }
+  h2 {
+    margin: 0 0 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  label.field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    color: var(--muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+  }
+  input, select, button {
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: #101010;
+    color: var(--fg);
+    font: inherit;
+  }
+  input, select { width: 100%; padding: 7px 8px; font-size: 14px; }
+  select { appearance: auto; }
+  input:focus, select:focus, button:focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: 1px;
+  }
+  .checks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 20px;
+    margin-top: 14px;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .checks label { display: inline-flex; align-items: center; gap: 7px; }
+  .checks input { width: auto; accent-color: var(--accent); }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 16px;
+  }
+  button {
+    padding: 7px 11px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: border-color .15s ease, color .15s ease;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button.primary { border-color: var(--accent); color: var(--accent); background: #102116; }
+  button:disabled { opacity: .45; cursor: default; }
+  .manual {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  #analysis, #moves, #theoryLine {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+  #analysis { color: var(--fg); }
+  #moves, #theoryLine { color: var(--muted); }
+  .bar-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    margin-top: 10px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .bar {
+    height: 8px;
+    margin-top: 5px;
+    border-radius: 4px;
+    background: var(--border);
+    overflow: hidden;
+  }
+  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .2s ease; }
+  footer {
+    margin-top: 48px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 12px;
+  }
+  footer .row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 20px;
+    align-items: center;
+  }
+  footer .right { margin-left: auto; }
+  @media (max-width: 620px) {
+    .wrap { padding-left: 18px; padding-right: 18px; }
+    header { padding-bottom: 36px; }
+    .grid, .grid.two { grid-template-columns: 1fr; }
+    .card { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="brand" href="/web">connectk</a>
+    <nav><span>connectk</span><span>local only</span></nav>
+  </header>
+
+  <main>
+    <h1>connectk</h1>
+    <p class="intro">A local solver for Connect-K. No account, no cloud — just the board, running on this machine.</p>
+
+    <div class="card" id="boardCard">
+      <div class="card-head">
+        <span id="status">loading…</span>
+        <span class="muted" id="rulesLine"></span>
+      </div>
+      <canvas id="board" width="900" height="760" aria-label="Connect-K board"></canvas>
+      <div id="err"></div>
+      <div class="manual">
+        <input id="manualMove" type="text" inputmode="numeric" placeholder="move — 4, or 4:2 for free placement">
+        <button id="playManual" type="button">play</button>
+      </div>
+    </div>
+
+    <section>
+      <h2>game</h2>
+      <div class="grid two">
+        <label class="field">preset
+          <select id="preset">
+            <option value="standard">standard 7×6, k=4</option>
+            <option value="small">small 5×4, k=4</option>
+            <option value="connect3">connect 3 — free 4×3</option>
+            <option value="connect2">connect 2 — 3×3</option>
+            <option value="connect1">connect 1 — 3×3</option>
+            <option value="connect0">connect 0 — 3×3</option>
+            <option value="gomoku">free 9×9, k=5</option>
+            <option value="custom">custom</option>
+          </select>
+        </label>
+        <label class="field">players
+          <select id="players">
+            <option value="hvh">human vs human</option>
+            <option value="hva" selected>human vs ai</option>
+            <option value="avh">ai vs human</option>
+            <option value="ava">ai vs ai</option>
+          </select>
+        </label>
+      </div>
+      <div class="grid" style="margin-top:12px">
+        <label class="field">width
+          <input id="w" type="number" min="0" max="2147483647" step="1" value="7">
+        </label>
+        <label class="field">height
+          <input id="h" type="number" min="0" max="2147483647" step="1" value="6">
+        </label>
+        <label class="field">k
+          <input id="k" type="number" min="0" max="2147483647" step="1" value="4">
+        </label>
+      </div>
+      <div class="grid two" style="margin-top:12px">
+        <label class="field">placement
+          <select id="placement">
+            <option value="gravity">gravity (drop)</option>
+            <option value="free">free placement</option>
+          </select>
+        </label>
+        <label class="field">book
+          <input id="book" type="text" readonly value="—">
+        </label>
+      </div>
+      <div class="checks">
+        <label><input id="diagonals" type="checkbox" checked> diagonals</label>
+        <label><input id="misere" type="checkbox"> misère</label>
+        <label><input id="useTheory" type="checkbox" checked> theory</label>
+      </div>
+      <div class="actions">
+        <button id="newGame" class="primary" type="button">new game</button>
+        <button id="undo" type="button">undo</button>
+        <button id="analyse" type="button">analyse</button>
+        <button id="aiMove" type="button">ai move</button>
+        <button id="cancel" type="button" disabled>cancel</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>analysis</h2>
+      <div id="analysis">no analysis yet</div>
+      <div id="theoryLine"></div>
+      <div class="bar-row"><span id="progressLabel">search</span><span id="progressText">idle</span></div>
+      <div class="bar"><div id="progressBar"></div></div>
+    </section>
+
+    <section>
+      <h2>moves</h2>
+      <div id="moves"></div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="row">
+      <span class="mono">$ whoami<br>itzalphabet</span>
+      <span>127.0.0.1 only</span>
+      <span class="right">connectk</span>
+    </div>
+  </footer>
+</div>
+
+<script>
+"use strict";
+const API_TOKEN = "__CONNECTK_TOKEN__";
+const $ = id => document.getElementById(id);
+const canvas = $("board");
+const ctx = canvas.getContext("2d");
+const I32_MAX = 2147483647;
+
+let state = null;
+let geom = null;
+let hover = { c: -1, r: -1 };
+let searching = false;
+let progressTimer = null;
+let progressPolling = false;
+let aiTimer = null;
+let symbolicOnly = false;
+let symbolicRules = null;
+let symbolicResult = null;
+
+const PRESETS = {
+  standard: { w: 7, h: 6, k: 4, placement: "gravity", diagonals: true, misere: false },
+  small: { w: 5, h: 4, k: 4, placement: "gravity", diagonals: true, misere: false },
+  connect3: { w: 4, h: 3, k: 3, placement: "free", diagonals: true, misere: false },
+  connect2: { w: 3, h: 3, k: 2, placement: "free", diagonals: true, misere: false },
+  connect1: { w: 3, h: 3, k: 1, placement: "gravity", diagonals: true, misere: false },
+  connect0: { w: 3, h: 3, k: 0, placement: "gravity", diagonals: true, misere: false },
+  gomoku: { w: 9, h: 9, k: 5, placement: "free", diagonals: true, misere: false }
+};
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+function showError(error) {
+  $("err").textContent = error ? String(error) : "";
+}
+
+function readInt(id, fallback) {
+  const value = Number.parseInt($(id).value, 10);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(I32_MAX, Math.max(0, value));
+}
+
+function normalizeControls() {
+  $("w").value = readInt("w", 7);
+  $("h").value = readInt("h", 6);
+  $("k").value = readInt("k", 4);
+}
+
+function rulesFromControls() {
+  normalizeControls();
+  return {
+    width: readInt("w", 7),
+    height: readInt("h", 6),
+    connect: readInt("k", 4),
+    placement: $("placement").value,
+    diagonals: $("diagonals").checked,
+    misere: $("misere").checked
+  };
+}
+
+async function call(command, args = {}) {
+  let response;
+  try {
+    response = await fetch("/api/" + command, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-ConnectK-Token": API_TOKEN
+      },
+      body: JSON.stringify(args)
+    });
+  } catch (error) {
+    throw new Error("could not reach the local ConnectK server");
+  }
+  let data = null;
+  try { data = await response.json(); } catch (_) {}
+  if (!response.ok) {
+    throw new Error(data && data.error ? data.error : ("HTTP " + response.status));
+  }
+  return data;
+}
+
+function cellAt(c, r) {
+  if (!state) return 0;
+  return state.cells[c * state.height + r] || 0;
+}
+
+function landingRow(c) {
+  let r = 0;
+  while (r < state.height && cellAt(c, r) !== 0) r += 1;
+  return r < state.height ? r : -1;
+}
+
+function aiToMove() {
+  if (symbolicOnly || !state || state.terminal) return false;
+  const mode = $("players").value;
+  return mode === "ava"
+    || (mode === "hva" && state.side_to_move === 2)
+    || (mode === "avh" && state.side_to_move === 1);
+}
+
+function fitCanvas() {
+  const width = Math.max(260, Math.floor(canvas.clientWidth || $("boardCard").clientWidth - 40));
+  const ratio = symbolicOnly
+    ? 0.62
+    : Math.min(1.15, Math.max(0.38, (state ? state.height : 6) / Math.max(1, state ? state.width : 7)));
+  const height = Math.round(width * ratio);
+  const dpr = window.devicePixelRatio || 1;
+  const targetW = Math.round(width * dpr);
+  const targetH = Math.round(height * dpr);
+  if (canvas.width !== targetW || canvas.height !== targetH) {
+    canvas.width = targetW;
+    canvas.height = targetH;
+  }
+}
+
+function drawBoard() {
+  fitCanvas();
+  const W = canvas.width;
+  const H = canvas.height;
+  const bg = cssVar("--bg") || "#ffffff";
+  const fg = cssVar("--fg") || "#161616";
+  const muted = cssVar("--muted") || "#6b6b6b";
+  const border = cssVar("--border") || "#e5e5e2";
+  const accent = cssVar("--accent") || "#22a85a";
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  if (symbolicOnly) {
+    geom = null;
+    ctx.strokeStyle = border;
+    ctx.lineWidth = Math.max(1, W * 0.002);
+    ctx.strokeRect(W * 0.06, H * 0.08, W * 0.88, H * 0.84);
+    ctx.fillStyle = fg;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = `${Math.max(18, W * 0.035)}px Georgia, serif`;
+    ctx.fillText("symbolic board", W / 2, H * 0.42);
+    ctx.fillStyle = muted;
+    ctx.font = `${Math.max(12, W * 0.022)}px ui-monospace, monospace`;
+    const dims = symbolicRules ? `${symbolicRules.width} × ${symbolicRules.height}, k=${symbolicRules.connect}` : "";
+    ctx.fillText(dims, W / 2, H * 0.53);
+    if (symbolicResult) ctx.fillText(symbolicResult.outcome.toLowerCase(), W / 2, H * 0.62);
+    return;
+  }
+
+  if (!state) return;
+  if (state.width === 0 || state.height === 0) {
+    geom = null;
+    ctx.fillStyle = muted;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = `${Math.max(14, W * 0.025)}px ui-monospace, monospace`;
+    ctx.fillText("no cells", W / 2, H / 2);
+    return;
+  }
+
+  const pad = Math.max(14, Math.min(W, H) * 0.035);
+  const labelH = state.width <= 80 ? Math.max(18, H * 0.045) : 0;
+  const cell = Math.min((W - 2 * pad) / state.width, (H - 2 * pad - labelH) / state.height);
+  if (!(cell > 0)) return;
+  const bw = cell * state.width;
+  const bh = cell * state.height;
+  const x0 = (W - bw) / 2;
+  const y0 = pad + Math.max(0, (H - 2 * pad - labelH - bh) / 2);
+  geom = { x0, y0, cell, bw, bh };
+
+  ctx.strokeStyle = border;
+  ctx.lineWidth = Math.max(1, cell * 0.035);
+  ctx.strokeRect(x0, y0, bw, bh);
+
+  const dense = cell >= 5;
+  const lineSet = new Set((state.line_cells || []).map(m => m.column + "," + m.row));
+
+  if (dense) {
+    for (let c = 0; c < state.width; c += 1) {
+      for (let r = 0; r < state.height; r += 1) {
+        const cx = x0 + (c + 0.5) * cell;
+        const cy = y0 + (state.height - 1 - r + 0.5) * cell;
+        const owner = cellAt(c, r);
+        ctx.beginPath();
+        ctx.arc(cx, cy, cell * 0.39, 0, Math.PI * 2);
+        if (owner === 0) {
+          ctx.strokeStyle = border;
+          ctx.lineWidth = Math.max(1, cell * 0.035);
+          ctx.stroke();
+        } else {
+          ctx.fillStyle = owner === 1 ? fg : accent;
+          ctx.fill();
+        }
+        if (lineSet.has(c + "," + r)) {
+          ctx.beginPath();
+          ctx.arc(cx, cy, cell * 0.47, 0, Math.PI * 2);
+          ctx.strokeStyle = fg;
+          ctx.lineWidth = Math.max(2, cell * 0.07);
+          ctx.stroke();
+        }
+      }
+    }
+    if (!searching && !state.terminal && !aiToMove() && hover.c >= 0) {
+      const r = state.gravity ? landingRow(hover.c) : hover.r;
+      if (r >= 0 && cellAt(hover.c, r) === 0) {
+        const cx = x0 + (hover.c + 0.5) * cell;
+        const cy = y0 + (state.height - 1 - r + 0.5) * cell;
+        ctx.save();
+        ctx.globalAlpha = 0.38;
+        ctx.beginPath();
+        ctx.arc(cx, cy, cell * 0.39, 0, Math.PI * 2);
+        ctx.fillStyle = state.side_to_move === 1 ? fg : accent;
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+  } else {
+    for (let i = 0; i < state.moves.length; i += 1) {
+      const m = state.moves[i];
+      const cx = x0 + (m.column + 0.5) * cell;
+      const cy = y0 + (state.height - 1 - m.row + 0.5) * cell;
+      ctx.beginPath();
+      ctx.arc(cx, cy, Math.max(2, cell * 0.42), 0, Math.PI * 2);
+      ctx.fillStyle = i % 2 === 0 ? fg : accent;
+      ctx.fill();
+    }
+  }
+
+  function mark(move, color, radius) {
+    if (!move) return;
+    const cx = x0 + (move.column + 0.5) * cell;
+    const cy = y0 + (state.height - 1 - move.row + 0.5) * cell;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(2, cell * 0.06);
+    ctx.stroke();
+  }
+  mark(state.suggested, accent, Math.max(4, cell * 0.48));
+  if (state.last_move && dense) {
+    const m = state.last_move;
+    const cx = x0 + (m.column + 0.5) * cell;
+    const cy = y0 + (state.height - 1 - m.row + 0.5) * cell;
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.max(2, cell * 0.1), 0, Math.PI * 2);
+    ctx.fillStyle = bg;
+    ctx.fill();
+  }
+
+  if (labelH > 0) {
+    ctx.fillStyle = muted;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.font = `${Math.max(10, Math.min(18, cell * 0.3))}px ui-monospace, monospace`;
+    if (state.width <= 50) {
+      for (let c = 0; c < state.width; c += 1) {
+        ctx.fillText(String(c + 1), x0 + (c + 0.5) * cell, y0 + bh + 6);
+      }
+    } else {
+      ctx.fillText("1", x0 + cell * 0.5, y0 + bh + 6);
+      ctx.fillText(String(state.width), x0 + bw - cell * 0.5, y0 + bh + 6);
+    }
+  }
+}
+
+function render() {
+  if (!state) {
+    drawBoard();
+    return;
+  }
+  $("status").textContent = state.status_text;
+  $("rulesLine").textContent = state.rules_text;
+  $("book").value = state.book_name || "—";
+  const moves = [];
+  state.moves.forEach((m, i) => {
+    if (i % 2 === 0) moves.push(`${i / 2 + 1}.`);
+    moves.push(m.notation);
+  });
+  $("moves").textContent = moves.join(" ");
+  if (state.theory) {
+    const parts = [`theory: ${state.theory.outcome.toLowerCase()}`];
+    if (state.theory.plies_to_end != null) parts.push(`${state.theory.plies_to_end} plies`);
+    if (state.theory.best_move) parts.push(`best ${state.theory.best_move.notation}`);
+    parts.push(state.theory.source);
+    $("theoryLine").textContent = parts.join(" · ");
+  } else {
+    $("theoryLine").textContent = "";
+  }
+  drawBoard();
+  scheduleAi();
+}
+
+function renderSymbolic() {
+  const r = symbolicRules;
+  $("status").textContent = "symbolic board — dense position not allocated";
+  $("rulesLine").textContent = r ? `${r.width}×${r.height}, k=${r.connect}` : "";
+  $("book").value = "—";
+  $("moves").textContent = "";
+  if (symbolicResult) {
+    const parts = [`proven (${symbolicResult.outcome.toLowerCase()})`];
+    if (symbolicResult.best_move) parts.push(`best ${symbolicResult.best_move.notation}`);
+    const plies = symbolicResult.plies_to_end_text || symbolicResult.plies_to_end;
+    if (plies != null) parts.push(`${plies} plies`);
+    $("analysis").textContent = parts.join(" · ");
+    $("theoryLine").textContent = symbolicResult.source;
+  } else {
+    $("analysis").textContent = "no symbolic classification for this board";
+    $("theoryLine").textContent = "";
+  }
+  setProgress(0, "symbolic");
+  drawBoard();
+}
+
+async function refresh() {
+  state = await call("get_state");
+  symbolicOnly = false;
+  render();
+}
+
+async function newGame() {
+  showError("");
+  stopAi();
+  const rules = rulesFromControls();
+  try {
+    state = await call("new_game", { rules });
+    symbolicOnly = false;
+    symbolicRules = null;
+    symbolicResult = null;
+    $("analysis").textContent = "no analysis yet";
+    setProgress(0, "idle");
+    render();
+  } catch (error) {
+    symbolicRules = rules;
+    symbolicOnly = true;
+    symbolicResult = null;
+    try {
+      symbolicResult = await call("symbolic_theory", { rules });
+    } catch (_) {}
+    showError(error);
+    renderSymbolic();
+  }
+}
+
+async function doPlay(column, row) {
+  if (symbolicOnly || searching || !state || state.terminal || aiToMove()) return;
+  showError("");
+  try {
+    state = await call("play", { column, row: row == null ? null : row });
+    $("analysis").textContent = "no analysis yet";
+    render();
+  } catch (error) {
+    showError(error);
+  }
+}
+
+function eventCell(event) {
+  if (!geom || !state) return { c: -1, r: -1 };
+  const rect = canvas.getBoundingClientRect();
+  const x = (event.clientX - rect.left) * (canvas.width / rect.width);
+  const y = (event.clientY - rect.top) * (canvas.height / rect.height);
+  const c = Math.floor((x - geom.x0) / geom.cell);
+  const rFromTop = Math.floor((y - geom.y0) / geom.cell);
+  const r = state.height - 1 - rFromTop;
+  if (c < 0 || c >= state.width || r < 0 || r >= state.height) return { c: -1, r: -1 };
+  return { c, r };
+}
+
+canvas.addEventListener("mousemove", event => {
+  const next = eventCell(event);
+  if (next.c !== hover.c || next.r !== hover.r) {
+    hover = next;
+    drawBoard();
+  }
+});
+canvas.addEventListener("mouseleave", () => {
+  hover = { c: -1, r: -1 };
+  drawBoard();
+});
+canvas.addEventListener("click", event => {
+  const { c, r } = eventCell(event);
+  if (c >= 0) doPlay(c, state && state.gravity ? null : r);
+});
+
+$("playManual").addEventListener("click", () => {
+  const raw = $("manualMove").value.trim();
+  if (!raw) return;
+  const parts = raw.split(":").map(part => Number.parseInt(part.trim(), 10));
+  if (!parts.length || parts.some(n => !Number.isFinite(n))) {
+    showError("move must look like 4 or 4:2");
+    return;
+  }
+  doPlay(parts[0] - 1, parts.length > 1 ? parts[1] - 1 : null);
+  $("manualMove").value = "";
+});
+$("manualMove").addEventListener("keydown", event => {
+  if (event.key === "Enter") $("playManual").click();
+});
+
+function setSearching(on) {
+  searching = on;
+  $("analyse").disabled = on;
+  $("aiMove").disabled = on;
+  $("cancel").disabled = !on;
+  if (on) {
+    pollProgress();
+    progressTimer = setInterval(pollProgress, 120);
+  } else if (progressTimer) {
+    clearInterval(progressTimer);
+    progressTimer = null;
+  }
+}
+
+function setProgress(done, text) {
+  $("progressBar").style.width = `${Math.max(0, Math.min(100, done))}%`;
+  $("progressText").textContent = text;
+}
+
+async function pollProgress() {
+  if (!searching || progressPolling) return;
+  progressPolling = true;
+  try {
+    const response = await fetch("/api/progress", { headers: { "X-ConnectK-Token": API_TOKEN } });
+    if (response.ok) {
+      const p = await response.json();
+      if (searching && p) {
+        $("status").textContent = "searching…";
+        const pct = p.nodes ? Math.min(92, 12 + Math.log10(p.nodes + 1) * 9) : 8;
+        setProgress(pct, `${Number(p.nodes).toLocaleString()} nodes${p.depth >= 0 ? ` · depth ${p.depth}` : ""}${p.best ? ` · best ${p.best.notation}` : ""}`);
+      }
+    }
+  } catch (_) {
+  } finally {
+    progressPolling = false;
+  }
+}
+
+function displayResult(result) {
+  const certainty = {
+    PROVEN_EXACT: "solved",
+    PROVEN_BY_THEORY: result.move_proven ? "theory · move proven" : "theory",
+    HEURISTIC_DEPTH_LIMITED: `heuristic depth ${result.depth_reached}`,
+    UNKNOWN_LIMIT_REACHED: "unknown"
+  }[result.certainty] || result.certainty.toLowerCase();
+  const parts = [certainty];
+  if (result.outcome) parts.push(result.outcome.toLowerCase());
+  if (result.best_move) parts.push(`best ${result.best_move.notation}`);
+  parts.push(`score ${result.score}`);
+  if (result.plies_to_end != null) parts.push(`${result.plies_to_end} plies`);
+  parts.push(`${Number(result.nodes).toLocaleString()} nodes`);
+  parts.push(`${result.elapsed_millis} ms`);
+  $("analysis").textContent = parts.join(" · ");
+  setProgress(100, "done");
+}
+
+async function runAnalysis(ai) {
+  if (searching) return;
+  if (symbolicOnly) {
+    try {
+      symbolicResult = await call("symbolic_theory", { rules: symbolicRules || rulesFromControls() });
+      renderSymbolic();
+    } catch (error) {
+      showError(error);
+    }
+    return;
+  }
+  if (!state || (ai && state.terminal)) return;
+  showError("");
+  setSearching(true);
+  setProgress(4, "searching");
+  $("status").textContent = "searching…";
+  try {
+    const result = await call(ai ? "ai_move" : "analyse", { req: { use_theory: $("useTheory").checked } });
+    displayResult(result);
+    state = await call("get_state");
+    render();
+    if (ai && !result.best_move) $("status").textContent = "ai has no move to play";
+  } catch (error) {
+    if (String(error).includes("cancelled")) {
+      $("status").textContent = "search cancelled";
+      setProgress(0, "cancelled");
+    } else {
+      showError(error);
+      setProgress(0, "error");
+    }
+  } finally {
+    setSearching(false);
+    scheduleAi();
+  }
+}
+
+function stopAi() {
+  if (aiTimer) {
+    clearTimeout(aiTimer);
+    aiTimer = null;
+  }
+}
+
+function scheduleAi() {
+  stopAi();
+  if (!aiToMove() || searching) return;
+  aiTimer = setTimeout(() => {
+    if (aiToMove()) runAnalysis(true);
+  }, 350);
+}
+
+$("analyse").addEventListener("click", () => runAnalysis(false));
+$("aiMove").addEventListener("click", () => runAnalysis(true));
+$("cancel").addEventListener("click", async () => {
+  try { await call("cancel"); } catch (_) {}
+});
+$("newGame").addEventListener("click", newGame);
+$("undo").addEventListener("click", async () => {
+  if (symbolicOnly || searching) return;
+  showError("");
+  stopAi();
+  try {
+    state = await call("undo");
+    $("analysis").textContent = "no analysis yet";
+    render();
+  } catch (error) {
+    showError(error);
+  }
+});
+
+$("preset").addEventListener("change", () => {
+  const preset = PRESETS[$("preset").value];
+  if (!preset) return;
+  $("w").value = preset.w;
+  $("h").value = preset.h;
+  $("k").value = preset.k;
+  $("placement").value = preset.placement;
+  $("diagonals").checked = preset.diagonals;
+  $("misere").checked = preset.misere;
+  newGame();
+});
+
+["w", "h", "k", "placement", "diagonals", "misere", "players"].forEach(id => {
+  $(id).addEventListener("change", () => {
+    if (id !== "players") $("preset").value = "custom";
+    newGame();
+  });
+});
+
+document.addEventListener("keydown", event => {
+  if (event.target.tagName === "INPUT" || event.target.tagName === "SELECT") return;
+  if (event.key >= "1" && event.key <= "9") {
+    const c = Number.parseInt(event.key, 10) - 1;
+    if (state && c < state.width) doPlay(c, state.gravity ? null : landingRow(c));
+  } else if (event.key === "u" || event.key === "U") {
+    $("undo").click();
+  } else if (event.key === "n" || event.key === "N") {
+    newGame();
+  } else if (event.key === "h" || event.key === "H") {
+    runAnalysis(false);
+  } else if (event.key === " ") {
+    event.preventDefault();
+    runAnalysis(true);
+  }
+});
+
+new ResizeObserver(() => drawBoard()).observe($("boardCard"));
+window.addEventListener("resize", drawBoard);
+
+(async function init() {
+  try {
+    await refresh();
+    if (state) {
+      $("w").value = state.width;
+      $("h").value = state.height;
+      $("k").value = state.connect;
+      $("placement").value = state.gravity ? "gravity" : "free";
+      $("diagonals").checked = !state.rules_text.includes("no-diagonals");
+      $("misere").checked = state.rules_text.includes("misere");
+    }
+  } catch (error) {
+    showError(error);
+    $("status").textContent = "not connected";
+    drawBoard();
+  }
+})();
+</script>
+</body>
+</html>

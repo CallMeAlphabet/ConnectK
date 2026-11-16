@@ -1,0 +1,31 @@
+# Maintainer: CallMeAlphabet <sigma.alphabet@proton.me>
+pkgname=connectk
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Exact and heuristic Connect-K solver with optional Linux GUI"
+arch=('x86_64')
+url="https://github.com/CallMeAlphabet/ConnectK"
+license=('Apache-2.0')
+depends=('gcc-libs' 'gtk3' 'webkit2gtk-4.1')
+makedepends=('rust')
+provides=('connectk')
+conflicts=('connectk-bin')
+source=("connectk::git+https://github.com/CallMeAlphabet/ConnectK.git#tag=v${pkgver}")
+sha256sums=('SKIP')
+
+build() {
+    cd "$srcdir/connectk/rust"
+    cargo build --locked --release --package connectk-cli
+    cargo build --locked --release --manifest-path "$srcdir/connectk/rust/gui/Cargo.toml"
+}
+
+package() {
+    cd "$srcdir/connectk"
+    install -Dm755 rust/target/release/connectk "$pkgdir/usr/bin/connectk"
+    install -Dm755 rust/gui/target/release/connectk-gui "$pkgdir/usr/bin/connectk-gui"
+    install -Dm644 rust/core/assets/std7x6-d10.book \
+        "$pkgdir/usr/share/connectk/books/std7x6-d10.book"
+    install -Dm644 README.md "$pkgdir/usr/share/doc/connectk/README.md"
+    install -Dm644 books/README.md "$pkgdir/usr/share/doc/connectk/books/README.md"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/connectk/LICENSE"
+}

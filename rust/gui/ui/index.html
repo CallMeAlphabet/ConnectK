@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ConnectK</title>
+<link rel="icon" href="/icon.png" type="image/png">
+<style>
+  :root {
+    --bg: #090909; --panel: #111111; --panel2: #191919; --text: #f2f2f0;
+    --muted: #999995; --accent: #4ade80; --border: #292929;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 13px/1.45 system-ui, "Segoe UI", Roboto, sans-serif;
+    height: 100vh; height: 100dvh;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  header {
+    display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center;
+    padding: 8px 10px; background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  header .title { font-weight: 700; margin-right: 4px; }
+  label { color: var(--muted); }
+  select, input[type="number"] {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 3px 5px;
+  }
+  select {
+    appearance: none; -webkit-appearance: none;
+    background-color: var(--panel2);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23dbe4f0' stroke-width='1.6'/%3E%3C/svg%3E");
+    background-position: calc(100% - 10px) 50%;
+    background-size: 10px 6px; background-repeat: no-repeat;
+    padding-right: 26px;
+  }
+  select option { background-color: var(--panel2); color: var(--text); }
+  input[type="number"] { width: 104px; }
+  button {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 4px 10px; cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: #183c26; }
+  main { flex: 1; display: flex; min-height: 0; min-width: 0; }
+  #boardWrap { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  #status { padding: 6px 12px; color: var(--text); min-height: 28px; }
+  #boardStage {
+    position: relative; flex: 1 1 0; height: 0;
+    min-height: 0; min-width: 0; overflow: hidden; background: var(--bg);
+  }
+  #board {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    max-width: 100%; max-height: 100%; display: block; touch-action: manipulation;
+  }
+  #boardFullscreen {
+    position: absolute; top: 10px; right: 10px; z-index: 3;
+    width: 34px; height: 34px; padding: 7px;
+    display: grid; place-items: center;
+    background: rgba(12, 12, 12, .94); border: 1px solid var(--border); border-radius: 6px;
+  }
+  #boardFullscreen svg { width: 18px; height: 18px; display: block; }
+  #focusStatus {
+    position: absolute; left: 10px; top: 10px; z-index: 3; display: none;
+    max-width: calc(100% - 64px); padding: 6px 9px;
+    background: rgba(12, 12, 12, .94); border: 1px solid var(--border); border-radius: 6px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  body.board-only header, body.board-only aside, body.board-only #status,
+  body.board-only #err, body.board-only .hint-keys { display: none; }
+  body.board-only #focusStatus { display: block; }
+  body.board-only main, body.board-only #boardWrap, body.board-only #boardStage {
+    flex: 1 1 0; min-height: 0;
+  }
+  aside {
+    width: 360px; flex: none; overflow-y: auto; padding: 8px;
+    background: var(--panel); border-left: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  section { border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+  section h3 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .btnrow { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  #badge {
+    border-radius: 5px; padding: 5px 8px; font-weight: 600; color: #fff;
+    background: #455a75; text-align: center;
+  }
+  #result, #moves {
+    white-space: pre-wrap; word-break: break-word; margin: 0;
+    font: 12px/1.5 ui-monospace, monospace; color: var(--text);
+  }
+  .hint-keys { color: var(--muted); font-size: 11px; padding: 0 12px 8px; }
+  #err { color: #ff8a80; min-height: 16px; padding: 0 12px; }
+</style>
+</head>
+<body>
+<header>
+  <span class="title">ConnectK</span>
+  <label>Preset:</label>
+  <select id="preset">
+    <option>Standard 7x6, K=4</option>
+    <option>Small (exact-friendly) 5x4, K=4</option>
+    <option>Gravity 9x6, K=5</option>
+    <option>Gravity 10x7, K=6</option>
+    <option>No diagonals 7x6, K=4</option>
+    <option>Misere 7x6, K=4</option>
+    <option>Free 5x5, K=4</option>
+    <option>Free 9x9, K=5 (Gomoku-lite)</option>
+    <option>Custom</option>
+  </select>
+  <label>W:</label><input id="w" type="number" min="0" max="2147483647" value="7">
+  <label>H:</label><input id="h" type="number" min="0" max="2147483647" value="6">
+  <label>K:</label><input id="k" type="number" min="0" max="2147483647" value="4">
+  <select id="placement">
+    <option value="gravity">Gravity (drop)</option>
+    <option value="free">Free placement</option>
+  </select>
+  <label><input id="diagonals" type="checkbox" checked> Diagonals</label>
+  <label><input id="misere" type="checkbox"> Misere (line loses)</label>
+  <button id="newGame" class="primary">New game</button>
+  <button id="undo">Undo</button>
+</header>
+
+<main>
+  <div id="boardWrap">
+    <div id="status">Loading...</div>
+    <div id="err"></div>
+    <div id="boardStage">
+      <canvas id="board"></canvas>
+      <div id="focusStatus"></div>
+      <button id="boardFullscreen" type="button" title="Board-only fullscreen" aria-label="Toggle board-only fullscreen"></button>
+    </div>
+    <div class="hint-keys">Keys: 1-9 play column - U undo - N new game - H hint - Space AI move - F board-only</div>
+  </div>
+
+  <aside>
+    <section>
+      <h3>Players</h3>
+      <select id="players" style="width:100%">
+        <option>Human vs Human</option>
+        <option selected>Human vs AI</option>
+        <option>AI vs Human</option>
+        <option>AI vs AI</option>
+      </select>
+    </section>
+
+    <section>
+      <h3>Solver</h3>
+      <label><input id="useTheory" type="checkbox" checked> Theory</label>
+      <div class="btnrow">
+        <button id="hint">Analyse / Hint</button>
+        <button id="aiMove">AI move now</button>
+        <button id="cancel" disabled>Cancel</button>
+      </div>
+    </section>
+
+    <section>
+      <h3>Analysis</h3>
+      <div id="badge">No analysis yet</div>
+      <pre id="result"></pre>
+    </section>
+
+    <section>
+      <h3>Moves</h3>
+      <pre id="moves"></pre>
+    </section>
+  </aside>
+</main>
+
+<script>
+"use strict";
+const API_TOKEN = "__CONNECTK_TOKEN__";
+const $ = id => document.getElementById(id);
+const canvas = $("board"), ctx = canvas.getContext("2d");
+const boardStage = $("boardStage");
+
+let state = null;
+let geom = null;
+let hover = { c: -1, r: -1 };
+let searching = false;
+let aiTimer = null;
+let aiPending = false;
+let resizeQueued = false;
+let progressTimer = null;
+let progressPolling = false;
+let browserFullscreen = false;
+const ICON_EXPAND = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const ICON_COMPRESS = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h5V4M20 9h-5V4M4 15h5v5M20 15h-5v5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+const COLORS = {
+  bg: "#090909", board: "#173d6d", boardTop: "#24578e", boardEdge: "#102b4d",
+  hole: "#0b1728", holeShadow: "#050b13",
+  p1: "#e03e3a", p1Light: "#f8968c", p1Dark: "#96201c",
+  p2: "#f2c636", p2Light: "#ffe896", p2Dark: "#aa8014",
+  labels: "#a4a4a0", suggest: "#4ade80", last: "#ffffff"
+};
+
+function showError(e) { $("err").textContent = e ? String(e) : ""; }
+
+function rulesFromControls() {
+  return {
+    width: parseInt($("w").value, 10),
+    height: parseInt($("h").value, 10),
+    connect: parseInt($("k").value, 10),
+    placement: $("placement").value,
+    diagonals: $("diagonals").checked,
+    misere: $("misere").checked
+  };
+}
+function clampInt(input, min, max, fallback) {
+  const parsed = parseInt(input.value, 10);
+  const value = Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
+  input.value = value;
+  return value;
+}
+function normalizeBoardControls() {
+  clampInt($("k"), 0, 2147483647, 4);
+  $("w").min = 0;
+  $("h").min = 0;
+  clampInt($("w"), 0, 2147483647, 7);
+  clampInt($("h"), 0, 2147483647, 6);
+}
+function requestFromControls() {
+  return { use_theory: $("useTheory").checked };
+}
+
+async function call(cmd, args = {}) {
+  let response;
+  try {
+    response = await fetch("/api/" + cmd, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-ConnectK-Token": API_TOKEN
+      },
+      body: JSON.stringify(args)
+    });
+  } catch (err) {
+    showError("Could not reach the ConnectK GUI server — launch with `connectk gui` from the repository root");
+    throw err;
+  }
+  let data = null;
+  try { data = await response.json(); } catch (_) {}
+  if (!response.ok) {
+    throw new Error(data && data.error ? data.error : ("HTTP " + response.status));
+  }
+  return data;
+}
+
+async function refresh() {
+  state = await call("get_state");
+  render();
+}
+
+function render() {
+  if (!state) return;
+  $("status").textContent = state.status_text + "   ·   " + state.rules_text;
+  $("focusStatus").textContent = state.status_text;
+  let txt = "";
+  state.moves.forEach((m, i) => {
+    if (i % 2 === 0) txt += (i / 2 + 1) + ". ";
+    txt += m.notation + " ";
+  });
+  $("moves").textContent = txt;
+  drawBoard();
+  maybeScheduleAi();
+}
+
+function cellAt(c, r) { return state.cells[c * state.height + r]; }
+function landingRow(c) {
+  let r = 0;
+  while (r < state.height && cellAt(c, r) !== 0) r++;
+  return r < state.height ? r : -1;
+}
+
+function scheduleResize() {
+  if (resizeQueued) return;
+  resizeQueued = true;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    resizeQueued = false;
+    resizeCanvas();
+  }));
+}
+function fitCanvas() {
+  const dpr = window.devicePixelRatio || 1;
+  const width = Math.max(1, Math.round(boardStage.clientWidth * dpr));
+  const height = Math.max(1, Math.round(boardStage.clientHeight * dpr));
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+}
+function resizeCanvas() {
+  fitCanvas();
+  drawBoard();
+}
+
+function drawBoard() {
+  if (!state) return;
+  fitCanvas();
+  const W = canvas.width, H = canvas.height;
+  if (W < 20 || H < 20) return;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = COLORS.bg; ctx.fillRect(0, 0, W, H);
+  const pad = Math.min(W, H) * 0.03 + 4;
+  const cell = Math.min((W - 2 * pad) / state.width, (H - 2 * pad) / (state.height + 0.65));
+  const labelH = cell * 0.65;
+  if (cell <= 4) return;
+  const bw = cell * state.width, bh = cell * state.height;
+  const x0 = (W - bw) / 2, y0 = pad + (H - 2 * pad - labelH - bh) / 2;
+  geom = { x0, y0, cell, bw, bh };
+
+  roundRect(x0 - cell * 0.18, y0 - cell * 0.18, bw + cell * 0.36, bh + cell * 0.36, cell * 0.22);
+  ctx.fillStyle = COLORS.board; ctx.fill();
+  ctx.strokeStyle = COLORS.boardEdge; ctx.lineWidth = Math.max(1, cell * 0.04); ctx.stroke();
+
+  const lineSet = new Set(state.line_cells.map(m => m.column + "," + m.row));
+  for (let c = 0; c < state.width; c++) {
+    for (let r = 0; r < state.height; r++) {
+      const cx = x0 + (c + 0.5) * cell;
+      const cy = y0 + (state.height - 1 - r + 0.5) * cell;
+      const owner = cellAt(c, r);
+      if (owner === 0) drawHole(cx, cy, cell);
+      else drawDisc(cx, cy, cell, owner);
+      if (lineSet.has(c + "," + r)) {
+        ctx.beginPath(); ctx.arc(cx, cy, cell * 0.46, 0, Math.PI * 2);
+        ctx.strokeStyle = "#ffffff"; ctx.lineWidth = Math.max(2, cell * 0.07); ctx.stroke();
+      }
+    }
+  }
+  if (state.last_move) {
+    const m = state.last_move;
+    const cx = x0 + (m.column + 0.5) * cell, cy = y0 + (state.height - 1 - m.row + 0.5) * cell;
+    ctx.beginPath(); ctx.arc(cx, cy, cell * 0.14, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(255,255,255,0.85)"; ctx.fill();
+  }
+  if (state.suggested) {
+    const m = state.suggested;
+    const cx = x0 + (m.column + 0.5) * cell, cy = y0 + (state.height - 1 - m.row + 0.5) * cell;
+    ctx.beginPath(); ctx.arc(cx, cy, cell * 0.47, 0, Math.PI * 2);
+    ctx.strokeStyle = COLORS.suggest; ctx.lineWidth = Math.max(2, cell * 0.06); ctx.stroke();
+  }
+  if (!searching && !state.terminal && !aiToMove() && hover.c >= 0) {
+    const r = state.gravity ? landingRow(hover.c) : hover.r;
+    if (r >= 0 && cellAt(hover.c, r) === 0) {
+      const cx = x0 + (hover.c + 0.5) * cell, cy = y0 + (state.height - 1 - r + 0.5) * cell;
+      ctx.globalAlpha = 0.45;
+      drawDisc(cx, cy, cell, state.side_to_move);
+      ctx.globalAlpha = 1;
+    }
+  }
+  ctx.fillStyle = COLORS.labels;
+  ctx.font = `${Math.max(10, cell * (state.width >= 10 ? 0.26 : 0.32))}px system-ui`;
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  for (let c = 0; c < state.width; c++) {
+    ctx.fillText(String(c + 1), x0 + (c + 0.5) * cell, y0 + bh + cell * 0.25);
+  }
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+function drawHole(cx, cy, cell) {
+  ctx.beginPath(); ctx.arc(cx, cy, cell * 0.42, 0, Math.PI * 2);
+  ctx.fillStyle = COLORS.hole; ctx.fill();
+  ctx.beginPath(); ctx.arc(cx, cy + cell * 0.05, cell * 0.36, 0, Math.PI * 2);
+  ctx.fillStyle = COLORS.holeShadow; ctx.fill();
+}
+function drawDisc(cx, cy, cell, owner) {
+  const main = owner === 1 ? COLORS.p1 : COLORS.p2;
+  const light = owner === 1 ? COLORS.p1Light : COLORS.p2Light;
+  const dark = owner === 1 ? COLORS.p1Dark : COLORS.p2Dark;
+  ctx.beginPath(); ctx.arc(cx, cy + cell * 0.03, cell * 0.42, 0, Math.PI * 2);
+  ctx.fillStyle = dark; ctx.fill();
+  ctx.beginPath(); ctx.arc(cx, cy, cell * 0.40, 0, Math.PI * 2);
+  ctx.fillStyle = main; ctx.fill();
+  ctx.beginPath(); ctx.arc(cx - cell * 0.12, cy - cell * 0.14, cell * 0.16, 0, Math.PI * 2);
+  ctx.fillStyle = light; ctx.fill();
+}
+
+function eventCell(e) {
+  if (!geom || !state) return { c: -1, r: -1 };
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const x = (e.clientX - rect.left) * dpr, y = (e.clientY - rect.top) * dpr;
+  const c = Math.floor((x - geom.x0) / geom.cell);
+  const rFromTop = Math.floor((y - geom.y0) / geom.cell);
+  const r = state.height - 1 - rFromTop;
+  if (c < 0 || c >= state.width || r < 0 || r >= state.height) return { c: -1, r: -1 };
+  return { c, r };
+}
+
+canvas.addEventListener("mousemove", e => {
+  const { c, r } = eventCell(e);
+  if (c !== hover.c || r !== hover.r) { hover = { c, r }; drawBoard(); }
+});
+canvas.addEventListener("mouseleave", () => { hover = { c: -1, r: -1 }; drawBoard(); });
+canvas.addEventListener("click", async e => {
+  if (searching || !state || state.terminal || aiToMove()) return;
+  const { c, r } = eventCell(e);
+  if (c < 0) return;
+  await doPlay(c, state.gravity ? undefined : r);
+});
+
+async function doPlay(column, row) {
+  if (searching || !state || state.terminal || aiToMove()) return;
+  showError("");
+  try {
+    state = await call("play", { column, row: row === undefined ? null : row });
+    clearAnalysis();
+    render();
+  } catch (err) { showError(err); }
+}
+
+function clearAnalysis() {
+  $("badge").textContent = "No analysis yet";
+  $("badge").style.background = "#455a75";
+  $("result").textContent = "";
+}
+
+const PRESETS = [
+  { w: 7, h: 6, k: 4, placement: "gravity", diagonals: true, misere: false },
+  { w: 5, h: 4, k: 4, placement: "gravity", diagonals: true, misere: false },
+  { w: 9, h: 6, k: 5, placement: "gravity", diagonals: true, misere: false },
+  { w: 10, h: 7, k: 6, placement: "gravity", diagonals: true, misere: false },
+  { w: 7, h: 6, k: 4, placement: "gravity", diagonals: false, misere: false },
+  { w: 7, h: 6, k: 4, placement: "gravity", diagonals: true, misere: true },
+  { w: 5, h: 5, k: 4, placement: "free", diagonals: true, misere: false },
+  { w: 9, h: 9, k: 5, placement: "free", diagonals: true, misere: false }
+];
+$("preset").addEventListener("change", () => {
+  const p = PRESETS[$("preset").selectedIndex];
+  if (!p) return;
+  $("w").value = p.w; $("h").value = p.h; $("k").value = p.k;
+  $("placement").value = p.placement;
+  $("diagonals").checked = p.diagonals; $("misere").checked = p.misere;
+  normalizeBoardControls();
+  newGame();
+});
+["w", "h", "k", "placement", "diagonals", "misere"].forEach(id =>
+  $(id).addEventListener("change", () => {
+    $("preset").value = "Custom";
+    normalizeBoardControls();
+    newGame();
+  }));
+
+async function newGame() {
+  normalizeBoardControls();
+  showError("");
+  stopAiTimer();
+  try {
+    state = await call("new_game", { rules: rulesFromControls() });
+    clearAnalysis();
+    render();
+  } catch (err) { showError(err); }
+}
+$("newGame").addEventListener("click", newGame);
+$("undo").addEventListener("click", async () => {
+  showError("");
+  stopAiTimer();
+  try { state = await call("undo"); clearAnalysis(); render(); }
+  catch (err) { showError(err); }
+});
+$("players").addEventListener("change", newGame);
+
+async function pollProgress() {
+  if (!searching || progressPolling) return;
+  progressPolling = true;
+  try {
+    const response = await fetch("/api/progress", {
+      headers: { "X-ConnectK-Token": API_TOKEN }
+    });
+    if (response.ok) {
+      const p = await response.json();
+      if (searching && p) {
+        $("status").textContent = "Searching… nodes=" + p.nodes
+          + (p.depth >= 0 ? " depth=" + p.depth : "")
+          + (p.best ? " best=" + p.best.notation : "");
+      }
+    }
+  } catch (_) {
+  } finally {
+    progressPolling = false;
+  }
+}
+
+function setSearching(on) {
+  searching = on;
+  $("hint").disabled = on; $("aiMove").disabled = on; $("cancel").disabled = !on;
+  if (on) {
+    pollProgress();
+    progressTimer = setInterval(pollProgress, 100);
+  } else if (progressTimer) {
+    clearInterval(progressTimer);
+    progressTimer = null;
+  }
+}
+
+async function runAnalysis(ai) {
+  if (searching || !state) return;
+  if (state.terminal && ai) return;
+  showError("");
+  const beforePlies = state.moves.length;
+  let resumeAi = false;
+  setSearching(true);
+  $("status").textContent = "Searching…";
+  try {
+    const res = await call(ai ? "ai_move" : "analyse", { req: requestFromControls() });
+    displayResult(res);
+    state = await call("get_state");
+    render();
+    resumeAi = !ai || state.moves.length > beforePlies;
+    if (ai && !res.best_move) {
+      $("status").textContent = `AI has no move to play (${res.certainty}).`;
+    }
+  } catch (err) {
+    if (String(err).includes("cancelled")) { $("status").textContent = "Search cancelled"; }
+    else showError(err);
+  } finally {
+    setSearching(false);
+    if (resumeAi || aiPending) maybeScheduleAi();
+  }
+}
+$("hint").addEventListener("click", () => runAnalysis(false));
+$("aiMove").addEventListener("click", () => runAnalysis(true));
+$("cancel").addEventListener("click", async () => { try { await call("cancel"); } catch (_) {} });
+
+function displayResult(res) {
+  const badge = $("badge");
+  if (res.certainty === "PROVEN_EXACT") {
+    badge.textContent = "Solved"; badge.style.background = "#2e7d32";
+  } else if (res.certainty === "PROVEN_BY_THEORY") {
+    badge.textContent = res.move_proven ? "Theory · move proven" : "Theory"; badge.style.background = "#006978";
+  } else if (res.certainty === "HEURISTIC_DEPTH_LIMITED") {
+    badge.textContent = `Heuristic depth ${res.depth_reached} · not a proof`; badge.style.background = "#e67e22";
+  } else {
+    badge.textContent = "Unknown"; badge.style.background = "#b71c1c";
+  }
+  const parts = [];
+  if (res.best_move) parts.push("Best " + res.best_move.notation);
+  if (res.outcome) parts.push(res.outcome);
+  parts.push("Score " + res.score);
+  if (res.plies_to_end != null) parts.push(res.plies_to_end + " plies");
+  parts.push(res.nodes.toLocaleString() + " nodes");
+  parts.push(res.elapsed_millis + " ms");
+  $("result").textContent = parts.join(" · ");
+}
+
+function stopAiTimer() { if (aiTimer) { clearTimeout(aiTimer); aiTimer = null; } }
+function aiToMove() {
+  if (!state || state.terminal) return false;
+  const idx = $("players").selectedIndex;
+  return idx === 3 || (idx === 1 && state.side_to_move === 2) || (idx === 2 && state.side_to_move === 1);
+}
+function maybeScheduleAi() {
+  if (!aiToMove()) { aiPending = false; return; }
+  if (searching) { aiPending = true; return; }
+  aiPending = false;
+  stopAiTimer();
+  aiTimer = setTimeout(() => { if (aiToMove()) runAnalysis(true); }, 350);
+}
+
+function setBoardOnly(on) {
+  document.body.classList.toggle("board-only", on);
+  const button = $("boardFullscreen");
+  button.innerHTML = on ? ICON_COMPRESS : ICON_EXPAND;
+  button.title = on ? "Exit board-only fullscreen" : "Board-only fullscreen";
+  scheduleResize();
+  setTimeout(scheduleResize, 80);
+}
+async function toggleBoardOnly() {
+  const next = !document.body.classList.contains("board-only");
+  setBoardOnly(next);
+  try {
+    const res = await call("set_fullscreen", { enabled: next });
+    if (!res || !res.native) {
+      if (next && document.documentElement.requestFullscreen) {
+        browserFullscreen = true;
+        await document.documentElement.requestFullscreen();
+      } else if (!next && document.fullscreenElement) {
+        await document.exitFullscreen();
+      }
+    }
+  }
+  catch (_) {}
+  scheduleResize();
+}
+$("boardFullscreen").innerHTML = ICON_EXPAND;
+$("boardFullscreen").addEventListener("click", toggleBoardOnly);
+
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && document.body.classList.contains("board-only")) { toggleBoardOnly(); return; }
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  if (e.key >= "1" && e.key <= "9") {
+    const c = parseInt(e.key, 10) - 1;
+    if (state && c < state.width) doPlay(c, state.gravity ? undefined : landingRowFree(c));
+  } else if (e.key === "u" || e.key === "U") $("undo").click();
+  else if (e.key === "n" || e.key === "N") newGame();
+  else if (e.key === "h" || e.key === "H") runAnalysis(false);
+  else if (e.key === "f" || e.key === "F") toggleBoardOnly();
+  else if (e.key === " ") { e.preventDefault(); runAnalysis(true); }
+});
+function landingRowFree(c) {
+  for (let r = 0; r < state.height; r++) if (cellAt(c, r) === 0) return r;
+  return undefined;
+}
+
+new ResizeObserver(scheduleResize).observe(boardStage);
+window.addEventListener("resize", scheduleResize);
+document.addEventListener("fullscreenchange", () => {
+  scheduleResize();
+  if (!document.fullscreenElement && browserFullscreen) {
+    browserFullscreen = false;
+    if (document.body.classList.contains("board-only")) setBoardOnly(false);
+  }
+});
+if (window.visualViewport) window.visualViewport.addEventListener("resize", scheduleResize);
+normalizeBoardControls();
+refresh().then(scheduleResize).catch(showError);
+</script>
+</body>
+</html>

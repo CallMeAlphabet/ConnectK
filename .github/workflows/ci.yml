@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  engine:
+    name: Engine and CLI
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        working-directory: rust
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        working-directory: rust
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Run tests
+        working-directory: rust
+        run: cargo test --locked
+
+      - name: Check the published crate contains its standard book
+        working-directory: rust
+        run: |
+          set -euo pipefail
+          cargo package --locked --list --package connectk-core | grep -F 'assets/std7x6-d10.book'
+
+      - name: Release build
+        working-directory: rust
+        run: |
+          cargo build --locked --release
+          test -x target/release/connectk
+          ./target/release/connectk help
+
+      - name: Verify the engine builds with the GUI deleted
+        run: |
+          tmp="$(mktemp -d)"
+          cp -a rust "$tmp/rust"
+          cp -a books "$tmp/books"
+          rm -rf "$tmp/rust/gui" "$tmp/rust/target"
+          cd "$tmp/rust"
+          cargo test --locked
+
+  gui:
+    name: GUI check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --manifest-path rust/gui/Cargo.toml -- --check
+
+      - name: GUI Clippy (includes cargo check)
+        working-directory: rust/gui
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: GUI tests and release build
+        working-directory: rust/gui
+        run: |
+          cargo test --locked
+          cargo build --locked --release
+          test -x target/release/connectk-gui
+          ./target/release/connectk-gui --help
+          cargo tree --locked

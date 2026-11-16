@@ -1,0 +1,33 @@
+# Maintainer: CallMeAlphabet <sigma.alphabet@proton.me>
+pkgname=connectk-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Prebuilt Connect-K solver and Linux GUI"
+arch=('x86_64')
+url="https://github.com/CallMeAlphabet/ConnectK"
+license=('Apache-2.0')
+depends=('gcc-libs' 'gtk3' 'webkit2gtk-4.1')
+provides=('connectk')
+conflicts=('connectk')
+_asset="connectk-v${pkgver}-x86_64-unknown-linux-gnu"
+source=("https://github.com/CallMeAlphabet/ConnectK/releases/download/v${pkgver}/${_asset}.tar.gz"
+        "https://github.com/CallMeAlphabet/ConnectK/releases/download/v${pkgver}/${_asset}.tar.gz.sha256")
+sha256sums=('SKIP' 'SKIP')
+
+check() {
+    cd "$srcdir"
+    sha256sum -c "${_asset}.tar.gz.sha256"
+}
+
+package() {
+    cd "$srcdir"
+    tar -xzf "${_asset}.tar.gz"
+    install -Dm755 "${_asset}/bin/connectk" "$pkgdir/usr/bin/connectk"
+    install -Dm755 "${_asset}/bin/connectk-gui" "$pkgdir/usr/bin/connectk-gui"
+    install -Dm644 "${_asset}/books/std7x6-d10.book" \
+        "$pkgdir/usr/share/connectk/books/std7x6-d10.book"
+    install -Dm644 "${_asset}/README.md" "$pkgdir/usr/share/doc/connectk/README.md"
+    install -Dm644 "${_asset}/books/README.md" \
+        "$pkgdir/usr/share/doc/connectk/books/README.md"
+    install -Dm644 "${_asset}/LICENSE" "$pkgdir/usr/share/licenses/connectk/LICENSE"
+}

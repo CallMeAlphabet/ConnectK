@@ -1,0 +1,16 @@
+version = 4
+
+[[package]]
+name = "connectk-cli"
+version = "0.1.0"
+dependencies = [
+ "connectk-core",
+]
+
+[[package]]
+name = "connectk-core"
+version = "0.1.0"
+
+[[package]]
+name = "connectk-tools"
+version = "0.1.0"

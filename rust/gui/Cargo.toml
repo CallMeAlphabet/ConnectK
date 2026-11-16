@@ -1,0 +1,21 @@
+[package]
+name = "connectk-gui"
+version = "0.1.0"
+edition = "2021"
+description = "ConnectK desktop GUI. Deleting rust/gui removes the GUI completely; core and CLI are unaffected."
+
+[workspace]
+
+[[bin]]
+name = "connectk-gui"
+path = "src/main.rs"
+
+[dependencies]
+connectk-core = { path = "../core" }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

@@ -1,0 +1,18 @@
+pkgbase = connectk-bin
+	pkgdesc = Prebuilt Connect-K solver and Linux GUI
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/CallMeAlphabet/ConnectK
+	arch = x86_64
+	license = Apache-2.0
+	depends = gcc-libs
+	depends = gtk3
+	depends = webkit2gtk-4.1
+	provides = connectk
+	conflicts = connectk
+	source = https://github.com/CallMeAlphabet/ConnectK/releases/download/v0.1.0/connectk-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
+	source = https://github.com/CallMeAlphabet/ConnectK/releases/download/v0.1.0/connectk-v0.1.0-x86_64-unknown-linux-gnu.tar.gz.sha256
+	sha256sums = SKIP
+	sha256sums = SKIP
+
+pkgname = connectk-bin
